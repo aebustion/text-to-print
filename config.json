@@ -9,5 +9,8 @@
     "paper_width_chars": 32,
     "show_timestamp": true,
     "show_sender": true,
-    "decorative_border": true
+    "decorative_border": true,
+    
+    "print_images": false,
+    "_print_images_help": "Set to true to print images (requires Pillow: pip3 install Pillow)"
 }

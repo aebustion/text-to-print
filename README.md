@@ -87,6 +87,7 @@ Edit `config.json` to customize behavior:
 | `show_timestamp` | `true` | Show time on receipt |
 | `show_sender` | `true` | Show sender on receipt |
 | `decorative_border` | `true` | Add decorative borders |
+| `print_images` | `false` | Print image attachments (requires Pillow) |
 
 ### Filter by Contact
 
@@ -95,6 +96,33 @@ Only print messages from specific people:
 ```json
 "filter_contacts": ["+15551234567", "mom@icloud.com"]
 ```
+
+## Features
+
+### 📇 Contact Names
+The script looks up contact names from your Mac's Contacts app. Instead of seeing "+15551234567", you'll see "Mom" (if they're in your contacts).
+
+### 😀 Emoji Support
+Emojis are automatically converted to ASCII emoticons:
+- 😀 → :D
+- ❤️ → <3
+- 👍 → (thumbs up)
+- And 200+ more!
+
+### 📎 Attachment Detection
+When someone sends an image, video, or file, the receipt shows:
+```
+[Image: photo.jpg]
+```
+
+### 🖼️ Image Printing (Optional)
+To print actual images, enable it in config.json:
+```json
+"print_images": true
+```
+And install Pillow: `pip3 install Pillow`
+
+Images are automatically converted to black & white and sized for the receipt paper.
 
 ## Run at Startup (Optional)
 

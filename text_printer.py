@@ -55,6 +55,238 @@ ESC_ALIGN_LEFT = b'\x1b\x61\x00'
 ESC_ALIGN_CENTER = b'\x1b\x61\x01'
 LINE_FEED = b'\x0a'
 
+# Emoji to ASCII/Emoticon mapping
+EMOJI_MAP = {
+    # Smileys
+    '😀': ':D', '😃': ':D', '😄': ':D', '😁': ':D', '😆': 'XD',
+    '😅': "':D", '🤣': 'XD', '😂': ":'D", '🙂': ':)', '🙃': '(:', 
+    '😉': ';)', '😊': ':)', '😇': '0:)', '🥰': ':)', '😍': '<3_<3',
+    '🤩': '*_*', '😘': ':*', '😗': ':*', '😚': ':*', '😙': ':*',
+    '🥲': ":')", '😋': ':P', '😛': ':P', '😜': ';P', '🤪': ';P',
+    '😝': 'XP', '🤑': '$_$', '🤗': '(hug)', '🤭': ':x', '🤫': 'shh',
+    '🤔': ':/', '🤐': ':X', '🤨': 'o_O', '😐': ':|', '😑': '-_-',
+    '😶': ':', '😏': ';)', '😒': '-_-', '🙄': '9_9', '😬': ':E',
+    '🤥': ':^)', '😌': ':)', '😔': ':(', '😪': ':_(', '🤤': ':)~',
+    '😴': 'zzZ', '😷': ':mask:', '🤒': ':sick:', '🤕': ':hurt:',
+    '🤢': ':X', '🤮': ':P~~', '🤧': ':achoo:', '🥵': ':hot:',
+    '🥶': ':cold:', '🥴': ':~)', '😵': 'X_X', '🤯': ':boom:',
+    '🤠': ':cowboy:', '🥳': ':party:', '🥸': ':disguise:',
+    '😎': 'B)', '🤓': '8)', '🧐': '-O-', 
+    '😕': ':/', '😟': ':(', '🙁': ':(', '😮': ':O', '😯': ':O',
+    '😲': ':O', '😳': ':$', '🥺': ';_;', '😦': 'D:', '😧': 'D:',
+    '😨': 'D:', '😰': "D':", '😥': ":'(", '😢': ":'(", '😭': ":'((",
+    '😱': ':scream:', '😖': '>_<', '😣': '>_<', '😞': ':(', 
+    '😓': "':(",  '😩': 'D:', '😫': 'D:', '🥱': ':yawn:',
+    '😤': '>:(', '😡': '>:(', '😠': '>:(', '🤬': ':@#$!',
+    '😈': '>:)', '👿': '>:)', '💀': ':skull:', '☠️': ':skull:',
+    '💩': ':poop:', '🤡': ':clown:', '👹': ':ogre:', '👺': ':goblin:',
+    '👻': ':ghost:', '👽': ':alien:', '👾': ':alien:', '🤖': ':robot:',
+    
+    # Gestures
+    '👋': '(wave)', '🤚': '(hand)', '🖐️': '(hand)', '✋': '(hand)',
+    '🖖': '(vulcan)', '👌': '(ok)', '🤌': '(pinch)', '🤏': '(tiny)',
+    '✌️': '(peace)', '🤞': '(crossed)', '🤟': '(ILY)', '🤘': '(rock)',
+    '🤙': '(call me)', '👈': '<--', '👉': '-->', '👆': '(up)',
+    '👇': '(down)', '☝️': '(1)', '👍': '(thumbs up)', '👎': '(thumbs down)',
+    '✊': '(fist)', '👊': '(punch)', '🤛': '(fist)', '🤜': '(fist)',
+    '👏': '(clap)', '🙌': '(hooray)', '👐': '(open hands)', '🤲': '(palms)',
+    '🤝': '(handshake)', '🙏': '(pray)', '✍️': '(writing)',
+    '💪': '(flex)', '🦾': '(robot arm)', '🦿': '(leg)',
+    
+    # Hearts & Love
+    '❤️': '<3', '🧡': '<3', '💛': '<3', '💚': '<3', '💙': '<3',
+    '💜': '<3', '🖤': '<3', '🤍': '<3', '🤎': '<3', '💔': '</3',
+    '❣️': '<3', '💕': '<3<3', '💞': '<3', '💓': '<3', '💗': '<3',
+    '💖': '<3*', '💘': '<3--', '💝': '<3', '💟': '<3',
+    '😻': '<3_<3', '💑': '(couple)', '💏': '(kiss)',
+    
+    # Misc symbols
+    '✨': '*', '🌟': '*', '⭐': '*', '💫': '*', '✴️': '*',
+    '🔥': '(fire)', '💥': '(boom)', '💢': '(angry)', '💦': '(sweat)',
+    '💨': '(wind)', '🕳️': '(hole)', '💣': '(bomb)', '💬': '(chat)',
+    '🗨️': '(chat)', '🗯️': '(angry chat)', '💭': '(thought)',
+    '💤': 'zzZ', '🎵': '(music)', '🎶': '(music)', '🎼': '(music)',
+    '❗': '!', '❕': '!', '❓': '?', '❔': '?', '‼️': '!!',
+    '⁉️': '?!', '💯': '(100)', '🔴': '(o)', '🟢': '(o)', '🔵': '(o)',
+    '✅': '[v]', '❌': '[x]', '⭕': '(o)', '🚫': '(no)',
+    '➡️': '-->', '⬅️': '<--', '⬆️': '(up)', '⬇️': '(down)',
+    '↩️': '<-', '↪️': '->', '🔄': '(refresh)',
+    
+    # Weather
+    '☀️': '(sun)', '🌤️': '(sun)', '⛅': '(cloud)', '🌥️': '(cloud)',
+    '☁️': '(cloud)', '🌦️': '(rain)', '🌧️': '(rain)', '⛈️': '(storm)',
+    '🌩️': '(lightning)', '🌨️': '(snow)', '❄️': '(snow)', '☃️': '(snowman)',
+    '⛄': '(snowman)', '🌪️': '(tornado)', '🌈': '(rainbow)',
+    
+    # Animals
+    '🐶': '(dog)', '🐱': '(cat)', '🐭': '(mouse)', '🐹': '(hamster)',
+    '🐰': '(bunny)', '🦊': '(fox)', '🐻': '(bear)', '🐼': '(panda)',
+    '🐨': '(koala)', '🐯': '(tiger)', '🦁': '(lion)', '🐮': '(cow)',
+    '🐷': '(pig)', '🐸': '(frog)', '🐵': '(monkey)', '🙈': '(see no evil)',
+    '🙉': '(hear no evil)', '🙊': '(speak no evil)', '🐔': '(chicken)',
+    '🐧': '(penguin)', '🐦': '(bird)', '🦆': '(duck)', '🦅': '(eagle)',
+    '🦉': '(owl)', '🦇': '(bat)', '🐺': '(wolf)', '🐗': '(boar)',
+    '🐴': '(horse)', '🦄': '(unicorn)', '🐝': '(bee)', '🐛': '(bug)',
+    '🦋': '(butterfly)', '🐌': '(snail)', '🐞': '(ladybug)',
+    '🐜': '(ant)', '🦟': '(mosquito)', '🐢': '(turtle)', '🐍': '(snake)',
+    '🦎': '(lizard)', '🦖': '(dino)', '🦕': '(dino)', '🐙': '(octopus)',
+    '🦑': '(squid)', '🦐': '(shrimp)', '🦞': '(lobster)', '🦀': '(crab)',
+    '🐡': '(fish)', '🐠': '(fish)', '🐟': '(fish)', '🐬': '(dolphin)',
+    '🐳': '(whale)', '🐋': '(whale)', '🦈': '(shark)',
+    
+    # Food & Drink
+    '🍎': '(apple)', '🍐': '(pear)', '🍊': '(orange)', '🍋': '(lemon)',
+    '🍌': '(banana)', '🍉': '(watermelon)', '🍇': '(grapes)', '🍓': '(strawberry)',
+    '🍈': '(melon)', '🍒': '(cherry)', '🍑': '(peach)', '🥭': '(mango)',
+    '🍍': '(pineapple)', '🥝': '(kiwi)', '🍅': '(tomato)', '🥑': '(avocado)',
+    '🥦': '(broccoli)', '🥬': '(lettuce)', '🥒': '(cucumber)', '🌶️': '(pepper)',
+    '🌽': '(corn)', '🥕': '(carrot)', '🧄': '(garlic)', '🧅': '(onion)',
+    '🥔': '(potato)', '🍠': '(sweet potato)', '🥐': '(croissant)',
+    '🥯': '(bagel)', '🍞': '(bread)', '🥖': '(baguette)', '🥨': '(pretzel)',
+    '🧀': '(cheese)', '🥚': '(egg)', '🍳': '(cooking)', '🧈': '(butter)',
+    '🥞': '(pancakes)', '🧇': '(waffle)', '🥓': '(bacon)', '🥩': '(steak)',
+    '🍗': '(chicken)', '🍖': '(meat)', '🌭': '(hotdog)', '🍔': '(burger)',
+    '🍟': '(fries)', '🍕': '(pizza)', '🥪': '(sandwich)', '🥙': '(pita)',
+    '🧆': '(falafel)', '🌮': '(taco)', '🌯': '(burrito)', '🥗': '(salad)',
+    '🍝': '(pasta)', '🍜': '(ramen)', '🍲': '(stew)', '🍛': '(curry)',
+    '🍣': '(sushi)', '🍱': '(bento)', '🥟': '(dumpling)', '🍤': '(shrimp)',
+    '🍙': '(rice ball)', '🍚': '(rice)', '🍘': '(rice cracker)',
+    '🍥': '(fish cake)', '🥠': '(fortune cookie)', '🥡': '(takeout)',
+    '🍦': '(ice cream)', '🍧': '(shaved ice)', '🍨': '(sundae)',
+    '🍩': '(donut)', '🍪': '(cookie)', '🎂': '(cake)', '🍰': '(cake slice)',
+    '🧁': '(cupcake)', '🥧': '(pie)', '🍫': '(chocolate)', '🍬': '(candy)',
+    '🍭': '(lollipop)', '🍮': '(pudding)', '🍯': '(honey)',
+    '🍼': '(bottle)', '🥛': '(milk)', '☕': '(coffee)', '🍵': '(tea)',
+    '🧃': '(juice box)', '🥤': '(drink)', '🍶': '(sake)', '🍺': '(beer)',
+    '🍻': '(cheers)', '🥂': '(champagne)', '🍷': '(wine)', '🥃': '(whiskey)',
+    '🍸': '(cocktail)', '🍹': '(tropical)', '🧊': '(ice)',
+    
+    # Activities
+    '⚽': '(soccer)', '🏀': '(basketball)', '🏈': '(football)', '⚾': '(baseball)',
+    '🥎': '(softball)', '🎾': '(tennis)', '🏐': '(volleyball)', '🏉': '(rugby)',
+    '🥏': '(frisbee)', '🎱': '(pool)', '🏓': '(ping pong)', '🏸': '(badminton)',
+    '🎮': '(gaming)', '🎲': '(dice)', '🧩': '(puzzle)', '🎯': '(bullseye)',
+    '🎳': '(bowling)', '🎪': '(circus)', '🎭': '(theater)', '🎨': '(art)',
+    '🎬': '(movie)', '🎤': '(mic)', '🎧': '(headphones)', '🎸': '(guitar)',
+    '🎹': '(piano)', '🥁': '(drums)', '🎷': '(sax)', '🎺': '(trumpet)',
+    '🎻': '(violin)', '🪕': '(banjo)', '📷': '(camera)', '📸': '(camera)',
+    '📹': '(video)', '📺': '(tv)', '📻': '(radio)', '📱': '(phone)',
+    '💻': '(laptop)', '⌨️': '(keyboard)', '🖥️': '(computer)', '🖨️': '(printer)',
+    
+    # Celebrations
+    '🎉': '(party)', '🎊': '(confetti)', '🎈': '(balloon)', '🎁': '(gift)',
+    '🎀': '(ribbon)', '🏆': '(trophy)', '🏅': '(medal)', '🥇': '(gold)',
+    '🥈': '(silver)', '🥉': '(bronze)', '🎖️': '(medal)',
+}
+
+
+def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[bytes]:
+    """
+    Convert an image to ESC/POS bitmap format for thermal printing.
+    
+    Args:
+        image_path: Path to the image file
+        max_width: Maximum width in pixels (384 for 58mm paper, 576 for 80mm)
+    
+    Returns:
+        ESC/POS bitmap data, or None if conversion fails
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.warning("Pillow not installed. Run: pip3 install Pillow")
+        return None
+    
+    try:
+        # Open and convert image
+        img = Image.open(image_path)
+        
+        # Convert to grayscale
+        img = img.convert('L')
+        
+        # Resize to fit paper width while maintaining aspect ratio
+        width, height = img.size
+        if width > max_width:
+            ratio = max_width / width
+            new_height = int(height * ratio)
+            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Ensure width is divisible by 8 (required for bitmap)
+        width, height = img.size
+        if width % 8 != 0:
+            new_width = (width // 8 + 1) * 8
+            new_img = Image.new('L', (new_width, height), 255)
+            new_img.paste(img, (0, 0))
+            img = new_img
+        
+        width, height = img.size
+        
+        # Convert to 1-bit using dithering for better quality
+        img = img.convert('1')
+        
+        # Convert to ESC/POS bitmap format
+        # Using ESC * command (bit image mode)
+        data = bytearray()
+        
+        # Process image row by row
+        for y in range(height):
+            # ESC * m nL nH - Select bit image mode
+            # m = 0 (8-dot single density), 1 (8-dot double density), 32 (24-dot single), 33 (24-dot double)
+            # We use mode 0 for simplicity
+            n = width
+            nL = n % 256
+            nH = n // 256
+            
+            data.extend(b'\x1b\x2a\x00')  # ESC * 0
+            data.append(nL)
+            data.append(nH)
+            
+            # Each byte represents 8 horizontal pixels
+            for x in range(0, width, 8):
+                byte = 0
+                for bit in range(8):
+                    if x + bit < width:
+                        pixel = img.getpixel((x + bit, y))
+                        if pixel == 0:  # Black pixel
+                            byte |= (1 << (7 - bit))
+                data.append(byte)
+            
+            # Line feed after each row
+            data.extend(b'\x0a')
+        
+        return bytes(data)
+        
+    except Exception as e:
+        logger.error(f"Image conversion error: {e}")
+        return None
+
+
+def convert_emojis(text: str) -> str:
+    """Convert emojis in text to ASCII emoticons."""
+    for emoji, replacement in EMOJI_MAP.items():
+        text = text.replace(emoji, replacement)
+    
+    # Replace any remaining emojis with [?]
+    # This catches emojis not in our dictionary
+    import re
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags
+        "\U00002702-\U000027B0"  # dingbats
+        "\U0001F900-\U0001F9FF"  # supplemental symbols
+        "\U0001FA00-\U0001FA6F"  # chess symbols
+        "\U0001FA70-\U0001FAFF"  # symbols
+        "\U00002600-\U000026FF"  # misc symbols
+        "]+", 
+        flags=re.UNICODE
+    )
+    text = emoji_pattern.sub('[?]', text)
+    
+    return text
+
 
 # =============================================================================
 # BLE PRINTER CLASS
@@ -198,6 +430,63 @@ class BLEPrinter:
             
         except Exception as e:
             logger.error(f"Print error: {e}")
+            return False
+    
+    async def print_image(self, image_path: str) -> bool:
+        """Print an image to the thermal printer."""
+        if not self.client or not self.client.is_connected:
+            logger.error("Not connected to printer")
+            return False
+        
+        if not self.write_characteristic:
+            logger.error("No write characteristic available")
+            return False
+        
+        # Convert image to ESC/POS format
+        image_data = prepare_image_for_print(image_path)
+        if not image_data:
+            logger.error("Failed to prepare image")
+            return False
+        
+        try:
+            # Initialize printer
+            await self.client.write_gatt_char(
+                self.write_characteristic,
+                ESC_INIT,
+                response=False
+            )
+            await asyncio.sleep(0.1)
+            
+            # Send image data in chunks
+            chunk_size = 20
+            for i in range(0, len(image_data), chunk_size):
+                chunk = image_data[i:i + chunk_size]
+                try:
+                    await self.client.write_gatt_char(
+                        self.write_characteristic,
+                        chunk,
+                        response=False
+                    )
+                except Exception:
+                    await self.client.write_gatt_char(
+                        self.write_characteristic,
+                        chunk,
+                        response=True
+                    )
+                await asyncio.sleep(0.05)
+            
+            # Paper feed
+            await self.client.write_gatt_char(
+                self.write_characteristic,
+                LINE_FEED * 2,
+                response=False
+            )
+            
+            logger.info("✓ Image sent to printer")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Image print error: {e}")
             return False
 
 
@@ -348,6 +637,53 @@ class MessageMonitor:
             timestamp = timestamp / 1e9
         return datetime.fromtimestamp(timestamp + self.APPLE_EPOCH_OFFSET)
     
+    def _get_attachments(self, message_id: int, cursor) -> list:
+        """Get attachment information for a message."""
+        attachments = []
+        
+        try:
+            cursor.execute("""
+                SELECT 
+                    a.filename,
+                    a.mime_type,
+                    a.transfer_name
+                FROM attachment a
+                JOIN message_attachment_join maj ON a.ROWID = maj.attachment_id
+                WHERE maj.message_id = ?
+            """, (message_id,))
+            
+            for row in cursor.fetchall():
+                filename = row[0] or row[2] or 'attachment'
+                mime_type = row[1] or ''
+                
+                # Determine attachment type
+                if mime_type.startswith('image/'):
+                    att_type = 'image'
+                elif mime_type.startswith('video/'):
+                    att_type = 'video'
+                elif mime_type.startswith('audio/'):
+                    att_type = 'audio'
+                else:
+                    att_type = 'file'
+                
+                # Get the full path (attachments are stored in ~/Library/Messages/Attachments)
+                if filename and filename.startswith('~'):
+                    filepath = os.path.expanduser(filename)
+                else:
+                    filepath = filename
+                
+                attachments.append({
+                    'type': att_type,
+                    'mime_type': mime_type,
+                    'filename': os.path.basename(filename) if filename else 'attachment',
+                    'filepath': filepath,
+                })
+        
+        except Exception as e:
+            logger.debug(f"Error getting attachments: {e}")
+        
+        return attachments
+    
     def fetch_new_messages(self) -> list:
         """Fetch messages newer than last processed ID."""
         messages = []
@@ -360,6 +696,7 @@ class MessageMonitor:
             query = """
                 SELECT 
                     m.ROWID, m.text, m.date, m.is_from_me, m.service,
+                    m.cache_has_attachments,
                     h.id as handle_id
                 FROM message m
                 LEFT JOIN handle h ON m.handle_id = h.ROWID
@@ -389,13 +726,22 @@ class MessageMonitor:
                 handle_id = row['handle_id'] or 'Unknown'
                 contact_name = self.contacts.get_name(handle_id)
                 
+                # Check for attachments (images, etc.)
+                has_attachment = bool(row['cache_has_attachments'])
+                attachments = []
+                
+                if has_attachment:
+                    attachments = self._get_attachments(row['ROWID'], cursor)
+                
                 messages.append({
                     'id': row['ROWID'],
-                    'text': row['text'],
+                    'text': row['text'] or '',
                     'timestamp': self._convert_timestamp(row['date']),
                     'sender': contact_name or handle_id,  # Use name if found
                     'sender_id': handle_id,  # Keep the raw phone/email too
                     'is_from_me': bool(row['is_from_me']),
+                    'has_attachment': has_attachment,
+                    'attachments': attachments,
                 })
                 self.last_message_id = row['ROWID']
             
@@ -437,9 +783,26 @@ def format_receipt(message: dict, config: dict) -> str:
     if config.get('decorative_border', True):
         lines.append("-" * width)
     
-    # Message text (word-wrapped)
-    wrapped = textwrap.wrap(message['text'], width=width)
-    lines.extend(wrapped)
+    # Message text (word-wrapped) with emoji conversion
+    text = message.get('text', '')
+    if text:
+        text = convert_emojis(text)  # Convert emojis to ASCII
+        wrapped = textwrap.wrap(text, width=width)
+        lines.extend(wrapped)
+    
+    # Show attachments
+    attachments = message.get('attachments', [])
+    if attachments:
+        for att in attachments:
+            att_type = att['type']
+            if att_type == 'image':
+                lines.append(f"[Image: {att['filename']}]"[:width])
+            elif att_type == 'video':
+                lines.append(f"[Video: {att['filename']}]"[:width])
+            elif att_type == 'audio':
+                lines.append(f"[Audio: {att['filename']}]"[:width])
+            else:
+                lines.append(f"[File: {att['filename']}]"[:width])
     
     # Bottom border
     if config.get('decorative_border', True):
@@ -637,6 +1000,18 @@ async def cmd_monitor():
                 else:
                     logger.error("  ✗ Print failed, reconnecting...")
                     await printer.connect()
+                
+                # Print images if enabled
+                if config.get('print_images', False):
+                    for att in msg.get('attachments', []):
+                        if att['type'] == 'image' and att.get('filepath'):
+                            filepath = att['filepath']
+                            if os.path.exists(filepath):
+                                logger.info(f"  Printing image: {att['filename']}")
+                                if await printer.print_image(filepath):
+                                    logger.info("  ✓ Image printed!")
+                                else:
+                                    logger.warning("  ⚠ Image print failed")
             
             if messages:
                 monitor._save_state()

@@ -2,3 +2,6 @@
 # Install with: pip3 install -r requirements.txt
 
 bleak>=0.21.0    # Bluetooth Low Energy library
+
+# Optional: for printing images
+Pillow>=9.0.0
