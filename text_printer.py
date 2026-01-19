@@ -209,7 +209,12 @@ def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[b
         if width > max_width:
             ratio = max_width / width
             new_height = int(height * ratio)
-            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+            # Use LANCZOS (works with both old and new Pillow versions)
+            try:
+                resample = Image.Resampling.LANCZOS
+            except AttributeError:
+                resample = Image.LANCZOS  # Older Pillow versions
+            img = img.resize((max_width, new_height), resample)
         
         # Ensure width is divisible by 8 (required for bitmap)
         width, height = img.size
