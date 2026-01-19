@@ -5,3 +5,7 @@ bleak>=0.21.0    # Bluetooth Low Energy library
 
 # Optional: for printing images
 Pillow>=9.0.0
+
+# Optional: for HEIC image support (iPhone photos)
+# If not installed, falls back to macOS 'sips' command
+# pillow-heif>=0.10.0

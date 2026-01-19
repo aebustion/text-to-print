@@ -180,6 +180,56 @@ EMOJI_MAP = {
 }
 
 
+def _convert_heic_to_pil(image_path: str):
+    """
+    Convert HEIC image to PIL Image.
+    Uses pillow-heif if available, otherwise falls back to macOS sips command.
+    """
+    from PIL import Image
+    import subprocess
+    import tempfile
+    
+    # Method 1: Try pillow-heif (if installed)
+    try:
+        import pillow_heif
+        heif_file = pillow_heif.read_heif(image_path)
+        img = Image.frombytes(
+            heif_file.mode,
+            heif_file.size,
+            heif_file.data,
+            "raw",
+        )
+        return img
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"pillow-heif failed: {e}")
+    
+    # Method 2: Use macOS sips to convert (built-in on all Macs)
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            tmp_path = tmp.name
+        
+        # Use sips to convert HEIC to JPEG
+        result = subprocess.run(
+            ['sips', '-s', 'format', 'jpeg', image_path, '--out', tmp_path],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode == 0 and os.path.exists(tmp_path):
+            img = Image.open(tmp_path)
+            img.load()  # Load image data before we delete the file
+            os.unlink(tmp_path)  # Clean up temp file
+            return img
+        else:
+            logger.error(f"sips conversion failed: {result.stderr}")
+    except Exception as e:
+        logger.error(f"HEIC conversion error: {e}")
+    
+    return None
+
+
 def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[bytes]:
     """
     Convert an image to ESC/POS raster bitmap format for thermal printing.
@@ -197,9 +247,23 @@ def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[b
         logger.warning("Pillow not installed. Run: pip3 install Pillow")
         return None
     
+    # Try to register HEIC support
     try:
-        # Open image
-        img = Image.open(image_path)
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass  # HEIC support not available, will try conversion fallback
+    
+    try:
+        # Check if it's a HEIC file that needs conversion
+        if image_path.lower().endswith(('.heic', '.heif')):
+            img = _convert_heic_to_pil(image_path)
+            if img is None:
+                logger.error("Could not convert HEIC image")
+                return None
+        else:
+            # Open image normally
+            img = Image.open(image_path)
         
         # Handle rotation from EXIF data
         try:
