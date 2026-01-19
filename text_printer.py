@@ -182,7 +182,7 @@ EMOJI_MAP = {
 
 def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[bytes]:
     """
-    Convert an image to ESC/POS bitmap format for thermal printing.
+    Convert an image to ESC/POS raster bitmap format for thermal printing.
     
     Args:
         image_path: Path to the image file
@@ -192,61 +192,69 @@ def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[b
         ESC/POS bitmap data, or None if conversion fails
     """
     try:
-        from PIL import Image
+        from PIL import Image, ImageOps, ImageEnhance
     except ImportError:
         logger.warning("Pillow not installed. Run: pip3 install Pillow")
         return None
     
     try:
-        # Open and convert image
+        # Open image
         img = Image.open(image_path)
+        
+        # Handle rotation from EXIF data
+        try:
+            img = ImageOps.exif_transpose(img)
+        except:
+            pass
         
         # Convert to grayscale
         img = img.convert('L')
+        
+        # Increase contrast for better thermal printing
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(1.5)
         
         # Resize to fit paper width while maintaining aspect ratio
         width, height = img.size
         if width > max_width:
             ratio = max_width / width
             new_height = int(height * ratio)
-            # Use LANCZOS (works with both old and new Pillow versions)
             try:
                 resample = Image.Resampling.LANCZOS
             except AttributeError:
-                resample = Image.LANCZOS  # Older Pillow versions
+                resample = Image.LANCZOS
             img = img.resize((max_width, new_height), resample)
         
-        # Ensure width is divisible by 8 (required for bitmap)
+        # Ensure width is divisible by 8
         width, height = img.size
         if width % 8 != 0:
-            new_width = (width // 8 + 1) * 8
-            new_img = Image.new('L', (new_width, height), 255)
-            new_img.paste(img, (0, 0))
-            img = new_img
+            new_width = (width // 8) * 8
+            img = img.crop((0, 0, new_width, height))
         
         width, height = img.size
+        bytes_per_row = width // 8
         
-        # Convert to 1-bit using dithering for better quality
+        # Convert to 1-bit black and white with dithering
         img = img.convert('1')
         
-        # Convert to ESC/POS bitmap format
-        # Using ESC * command (bit image mode)
+        # Build ESC/POS raster image command
+        # GS v 0 - Print raster bit image
         data = bytearray()
         
-        # Process image row by row
+        # GS v 0 m xL xH yL yH d1...dk
+        # m = 0 (normal), 1 (double width), 2 (double height), 3 (double both)
+        data.extend(b'\x1d\x76\x30\x00')  # GS v 0, mode 0
+        
+        # xL xH = width in bytes
+        data.append(bytes_per_row % 256)
+        data.append(bytes_per_row // 256)
+        
+        # yL yH = height in dots
+        data.append(height % 256)
+        data.append(height // 256)
+        
+        # Image data - row by row
         for y in range(height):
-            # ESC * m nL nH - Select bit image mode
-            # m = 0 (8-dot single density), 1 (8-dot double density), 32 (24-dot single), 33 (24-dot double)
-            # We use mode 0 for simplicity
-            n = width
-            nL = n % 256
-            nH = n // 256
-            
-            data.extend(b'\x1b\x2a\x00')  # ESC * 0
-            data.append(nL)
-            data.append(nH)
-            
-            # Each byte represents 8 horizontal pixels
             for x in range(0, width, 8):
                 byte = 0
                 for bit in range(8):
@@ -255,14 +263,13 @@ def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[b
                         if pixel == 0:  # Black pixel
                             byte |= (1 << (7 - bit))
                 data.append(byte)
-            
-            # Line feed after each row
-            data.extend(b'\x0a')
         
         return bytes(data)
         
     except Exception as e:
         logger.error(f"Image conversion error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -448,10 +455,13 @@ class BLEPrinter:
             return False
         
         # Convert image to ESC/POS format
-        image_data = prepare_image_for_print(image_path)
+        # Use smaller width for BLE to avoid overwhelming the printer
+        image_data = prepare_image_for_print(image_path, max_width=256)
         if not image_data:
             logger.error("Failed to prepare image")
             return False
+        
+        logger.info(f"  Image data size: {len(image_data)} bytes")
         
         try:
             # Initialize printer
@@ -460,30 +470,46 @@ class BLEPrinter:
                 ESC_INIT,
                 response=False
             )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
             
-            # Send image data in chunks
-            chunk_size = 20
+            # Send image data in larger chunks with delays
+            # The GS v 0 command needs the header sent together
+            chunk_size = 100  # Larger chunks for image data
+            total_chunks = (len(image_data) + chunk_size - 1) // chunk_size
+            
             for i in range(0, len(image_data), chunk_size):
                 chunk = image_data[i:i + chunk_size]
+                chunk_num = i // chunk_size + 1
+                
                 try:
+                    await self.client.write_gatt_char(
+                        self.write_characteristic,
+                        chunk,
+                        response=True  # Use response for reliability
+                    )
+                except Exception as e:
+                    logger.debug(f"Chunk {chunk_num} write error: {e}")
+                    # Try without response
                     await self.client.write_gatt_char(
                         self.write_characteristic,
                         chunk,
                         response=False
                     )
-                except Exception:
-                    await self.client.write_gatt_char(
-                        self.write_characteristic,
-                        chunk,
-                        response=True
-                    )
-                await asyncio.sleep(0.05)
+                
+                # Longer delay to let printer process
+                await asyncio.sleep(0.1)
+                
+                # Progress indicator for large images
+                if chunk_num % 10 == 0:
+                    logger.debug(f"  Sent {chunk_num}/{total_chunks} chunks")
+            
+            # Wait for printing to complete
+            await asyncio.sleep(1.0)
             
             # Paper feed
             await self.client.write_gatt_char(
                 self.write_characteristic,
-                LINE_FEED * 2,
+                LINE_FEED * 3,
                 response=False
             )
             
@@ -492,6 +518,8 @@ class BLEPrinter:
             
         except Exception as e:
             logger.error(f"Image print error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
 
