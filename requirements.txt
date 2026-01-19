@@ -1,0 +1,4 @@
+# Text-to-Print Mac Only Edition
+# Install with: pip3 install -r requirements.txt
+
+bleak>=0.21.0    # Bluetooth Low Energy library

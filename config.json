@@ -1,0 +1,13 @@
+{
+    "poll_interval_seconds": 2,
+    
+    "filter_contacts": [],
+    "_filter_contacts_help": "Empty = all contacts. Example: ['+15551234567', 'friend@icloud.com']",
+    
+    "include_sent_messages": false,
+    
+    "paper_width_chars": 32,
+    "show_timestamp": true,
+    "show_sender": true,
+    "decorative_border": true
+}
