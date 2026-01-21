@@ -2,14 +2,17 @@
 """
 📱➡️🖨️ Text-to-Print (Mac Only Edition)
 
-Automatically prints incoming text messages to a GOOJPRT PT-210 thermal printer.
+Automatically prints incoming text messages to a Bluetooth thermal printer.
 Uses Bluetooth Low Energy (BLE) for reliable communication.
+Supports various thermal printers including GOOJPRT PT-210 and generic BLE printers.
 
 Usage:
     python3 text_printer.py              Run the message monitor
     python3 text_printer.py --scan       Scan for BLE printers
     python3 text_printer.py --test       Test print via BLE
     python3 text_printer.py --explore    Explore printer's BLE services
+
+Configure your printer address in config.json using the address from --scan.
 """
 
 import asyncio
@@ -40,14 +43,22 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# PT-210 BLE CONSTANTS
+# BLE PRINTER CONSTANTS
 # =============================================================================
 
-# PT-210 BLE Service UUID (custom print service)
-PT210_SERVICE_UUID = "e7810a71-73ae-499d-8c15-faa9aef0c3f2"
+# Known printer service UUIDs (will try these in order, then fall back to discovery)
+KNOWN_PRINT_SERVICE_UUIDS = [
+    "e7810a71-73ae-499d-8c15-faa9aef0c3f2",  # PT-210 / GOOJPRT
+    "49535343-fe7d-4ae5-8fa9-9fafd205e455",  # Common thermal printer service
+    "000018f0-0000-1000-8000-00805f9b34fb",  # Another common printer service
+]
 
-# Common write characteristic UUID for this printer family
-PT210_WRITE_CHAR = "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f"
+# Known write characteristic UUIDs
+KNOWN_WRITE_CHAR_UUIDS = [
+    "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",  # PT-210 / GOOJPRT
+    "49535343-8841-43f4-a8d4-ecbe34729bb3",  # Common thermal printer write char
+    "49535343-1e4d-4bd9-ba61-23c647249616",  # Another common write char
+]
 
 # ESC/POS Commands
 ESC_INIT = b'\x1b\x40'           # Initialize printer
@@ -369,39 +380,53 @@ def convert_emojis(text: str) -> str:
 # =============================================================================
 
 class BLEPrinter:
-    """Bluetooth Low Energy printer driver for PT-210."""
+    """Bluetooth Low Energy printer driver for thermal printers."""
     
-    def __init__(self):
+    def __init__(self, config: dict = None):
         self.client: Optional[BleakClient] = None
         self.device_address: Optional[str] = None
         self.write_characteristic: Optional[str] = None
+        self.config = config or {}
     
     async def discover(self) -> Optional[str]:
-        """Discover PT-210 printer via BLE scan."""
-        logger.info("Scanning for PT-210 via BLE...")
+        """Discover printer via BLE scan or use configured address."""
+        # Check if we have a configured printer address
+        configured_address = self.config.get('printer_address')
+        configured_name = self.config.get('printer_name', '')
+        
+        if configured_address:
+            logger.info(f"Using configured printer: {configured_name or configured_address}")
+            self.device_address = configured_address
+            return configured_address
+        
+        logger.info("Scanning for BLE printers...")
         
         devices = await BleakScanner.discover(timeout=10.0)
         
-        # Look for PT-210 by name
+        # Look for known printer names
+        printer_keywords = ["PT-210", "PT210", "Printer", "PRINT", "GOOJPRT", "Thermal"]
         for device in devices:
             name = device.name or ""
-            if "PT-210" in name or "PT210" in name:
-                logger.info(f"✓ Found PT-210: {device.name} ({device.address})")
-                self.device_address = device.address
-                return device.address
+            for keyword in printer_keywords:
+                if keyword.upper() in name.upper():
+                    logger.info(f"✓ Found printer: {device.name} ({device.address})")
+                    self.device_address = device.address
+                    return device.address
         
-        # If not found by name, look for devices with the PT-210 service UUID
-        logger.info("Scanning for devices with PT-210 service UUID...")
+        # If not found by name, look for devices with known printer service UUIDs
+        logger.info("Scanning for devices with known printer service UUIDs...")
         devices = await BleakScanner.discover(timeout=10.0, return_adv=True)
         
         for device, adv_data in devices.values():
             service_uuids = [s.lower() for s in adv_data.service_uuids]
-            if PT210_SERVICE_UUID.lower() in service_uuids:
-                logger.info(f"✓ Found device with PT-210 service: {device.name} ({device.address})")
-                self.device_address = device.address
-                return device.address
+            for known_uuid in KNOWN_PRINT_SERVICE_UUIDS:
+                if known_uuid.lower() in service_uuids:
+                    logger.info(f"✓ Found device with printer service: {device.name} ({device.address})")
+                    self.device_address = device.address
+                    return device.address
         
-        logger.error("PT-210 not found. Make sure it's turned on and in range.")
+        logger.error("Printer not found. Make sure it's turned on and in range.")
+        logger.error("You can configure the printer address in config.json")
         return None
     
     async def connect(self, address: Optional[str] = None) -> bool:
@@ -434,27 +459,50 @@ class BLEPrinter:
     
     async def _find_write_characteristic(self):
         """Find the writable characteristic for sending print data."""
+        # First, check for known printer service UUIDs
         for service in self.client.services:
-            # Check if this is the PT-210 custom service
-            if PT210_SERVICE_UUID.lower() in service.uuid.lower():
-                logger.debug(f"Found PT-210 service: {service.uuid}")
-                
-                for char in service.characteristics:
-                    if "write" in char.properties or "write-without-response" in char.properties:
-                        self.write_characteristic = char.uuid
-                        logger.debug(f"Using write characteristic: {char.uuid}")
-                        return
+            service_uuid_lower = service.uuid.lower()
+            for known_service in KNOWN_PRINT_SERVICE_UUIDS:
+                if known_service.lower() in service_uuid_lower:
+                    logger.debug(f"Found known printer service: {service.uuid}")
+                    
+                    for char in service.characteristics:
+                        if "write" in char.properties or "write-without-response" in char.properties:
+                            self.write_characteristic = char.uuid
+                            logger.info(f"Using write characteristic: {char.uuid}")
+                            return
         
-        # Fallback: search all services for a writable characteristic
+        # Second, check for known write characteristic UUIDs directly
+        for service in self.client.services:
+            for char in service.characteristics:
+                char_uuid_lower = char.uuid.lower()
+                for known_char in KNOWN_WRITE_CHAR_UUIDS:
+                    if known_char.lower() in char_uuid_lower:
+                        if "write" in char.properties or "write-without-response" in char.properties:
+                            self.write_characteristic = char.uuid
+                            logger.info(f"Using known write characteristic: {char.uuid}")
+                            return
+        
+        # Fallback: search all services for any writable characteristic
+        # Prefer non-standard (vendor-specific) characteristics
+        candidates = []
         for service in self.client.services:
             for char in service.characteristics:
                 if "write" in char.properties or "write-without-response" in char.properties:
-                    if not char.uuid.startswith("0000"):  # Skip standard BLE characteristics
-                        self.write_characteristic = char.uuid
-                        logger.debug(f"Using write characteristic: {char.uuid}")
-                        return
+                    is_standard = char.uuid.lower().startswith("0000") and len(char.uuid) == 36
+                    candidates.append((char.uuid, is_standard, service.uuid))
+        
+        # Sort to prefer non-standard characteristics
+        candidates.sort(key=lambda x: x[1])
+        
+        if candidates:
+            self.write_characteristic = candidates[0][0]
+            logger.info(f"Using write characteristic: {self.write_characteristic}")
+            logger.debug(f"  From service: {candidates[0][2]}")
+            return
         
         logger.warning("No suitable write characteristic found")
+        logger.warning("Run with --explore to see available services and characteristics")
     
     async def disconnect(self):
         """Disconnect from printer."""
@@ -987,7 +1035,8 @@ async def cmd_test():
     print("\n🖨️  BLE Printer Test")
     print("=" * 50)
     
-    printer = BLEPrinter()
+    config = load_config()
+    printer = BLEPrinter(config)
     
     if not await printer.connect():
         print("\n❌ Could not connect to printer")
@@ -1013,10 +1062,11 @@ async def cmd_test():
 
 async def cmd_explore():
     """Explore printer's BLE services."""
-    print("\n🔎 Exploring PT-210 BLE Services")
+    print("\n🔎 Exploring Printer BLE Services")
     print("=" * 50)
     
-    printer = BLEPrinter()
+    config = load_config()
+    printer = BLEPrinter(config)
     
     if not await printer.discover():
         print("❌ Printer not found")
@@ -1027,13 +1077,19 @@ async def cmd_explore():
             print(f"\nConnected to: {printer.device_address}\n")
             
             for service in client.services:
-                is_print_service = PT210_SERVICE_UUID.lower() in service.uuid.lower()
+                # Check if this is a known print service
+                is_print_service = any(
+                    known.lower() in service.uuid.lower() 
+                    for known in KNOWN_PRINT_SERVICE_UUIDS
+                )
                 marker = " ⭐ PRINT SERVICE" if is_print_service else ""
                 print(f"📦 Service: {service.uuid}{marker}")
                 
                 for char in service.characteristics:
                     props = ", ".join(char.properties)
-                    print(f"   └─ {char.uuid}")
+                    is_write = "write" in char.properties or "write-without-response" in char.properties
+                    write_marker = " ✏️  WRITABLE" if is_write else ""
+                    print(f"   └─ {char.uuid}{write_marker}")
                     print(f"      Properties: {props}")
                 print()
     
@@ -1055,7 +1111,7 @@ async def cmd_monitor():
     
     config = load_config()
     monitor = MessageMonitor(config)
-    printer = BLEPrinter()
+    printer = BLEPrinter(config)
     
     # Connect to printer
     print("\nConnecting to printer via BLE...")
