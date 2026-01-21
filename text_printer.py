@@ -404,7 +404,7 @@ class BLEPrinter:
         devices = await BleakScanner.discover(timeout=10.0)
         
         # Look for known printer names
-        printer_keywords = ["PT-210", "PT210", "Printer", "PRINT", "GOOJPRT", "Thermal"]
+        printer_keywords = ["PT-210", "PT210", "Bluetooth Printer", "BlueTooth Printer", "Printer", "PRINT", "GOOJPRT", "Thermal"]
         for device in devices:
             name = device.name or ""
             for keyword in printer_keywords:
