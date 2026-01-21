@@ -11,7 +11,7 @@
     "show_sender": true,
     "decorative_border": true,
     
-    "print_images": false,
+    "print_images": true,
     "_print_images_help": "Set to true to print images (requires Pillow: pip3 install Pillow)",
     
     "printer_address": "F704658C-55F3-B15A-CBB4-9D58CC406D64",
