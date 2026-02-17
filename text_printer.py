@@ -752,22 +752,21 @@ class MessageMonitor:
         self.contacts = ContactLookup()  # For looking up contact names
     
     def _load_last_id(self) -> int:
-        """Load last processed message ID from state file."""
-        if self.state_file.exists():
-            try:
-                return int(self.state_file.read_text().strip())
-            except:
-                pass
-        
-        # Get current max ID (skip existing messages on first run)
+        """
+        Get the current max message ID from database.
+        Always starts fresh on boot - only prints messages that arrive AFTER the script starts.
+        """
         try:
             conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(ROWID) FROM message")
             result = cursor.fetchone()[0]
             conn.close()
-            return result or 0
-        except:
+            max_id = result or 0
+            logger.info(f"Starting from message ID {max_id} - only new messages will print")
+            return max_id
+        except Exception as e:
+            logger.error(f"Could not get max message ID: {e}")
             return 0
     
     def _save_state(self):
