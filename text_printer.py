@@ -831,6 +831,7 @@ class MessageMonitor:
     def fetch_new_messages(self) -> list:
         """Fetch messages newer than last processed ID."""
         messages = []
+        today = datetime.now().date()
         
         try:
             conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -850,20 +851,25 @@ class MessageMonitor:
             cursor.execute(query, (self.last_message_id,))
             
             for row in cursor.fetchall():
+                # Always update the last_message_id to avoid reprocessing
+                self.last_message_id = row['ROWID']
+                
+                # Skip messages not from today
+                msg_timestamp = self._convert_timestamp(row['date'])
+                if msg_timestamp.date() != today:
+                    continue
+                
                 # Skip sent messages unless configured to include them
                 if row['is_from_me'] and not self.config.get('include_sent_messages', False):
-                    self.last_message_id = row['ROWID']
                     continue
                 
                 # Skip empty messages
                 if not row['text']:
-                    self.last_message_id = row['ROWID']
                     continue
                 
                 # Apply contact filter if specified
                 filter_contacts = self.config.get('filter_contacts', [])
                 if filter_contacts and row['handle_id'] not in filter_contacts:
-                    self.last_message_id = row['ROWID']
                     continue
                 
                 # Get contact name if available, otherwise use phone/email
@@ -880,14 +886,13 @@ class MessageMonitor:
                 messages.append({
                     'id': row['ROWID'],
                     'text': row['text'] or '',
-                    'timestamp': self._convert_timestamp(row['date']),
+                    'timestamp': msg_timestamp,
                     'sender': contact_name or handle_id,  # Use name if found
                     'sender_id': handle_id,  # Keep the raw phone/email too
                     'is_from_me': bool(row['is_from_me']),
                     'has_attachment': has_attachment,
                     'attachments': attachments,
                 })
-                self.last_message_id = row['ROWID']
             
             conn.close()
             
