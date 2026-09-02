@@ -1,6 +1,14 @@
 # State files (tracks which messages have been processed)
 .last_message_id
 .last_message_id_ble
+.last_beeper_timestamp
+
+# Secrets -- never commit real tokens. See .env.example for the template.
+.env
+.env.local
+
+# Editor / tooling local state
+.claude/settings.local.json
 
 # Python
 __pycache__/

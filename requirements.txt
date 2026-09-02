@@ -3,6 +3,10 @@
 
 bleak>=0.21.0    # Bluetooth Low Energy library
 
+# Beeper Desktop API (WhatsApp/Instagram/etc.)
+requests>=2.31.0
+python-dotenv>=1.0.0    # Loads BEEPER_ACCESS_TOKEN from a local .env file
+
 # Optional: for printing images
 Pillow>=9.0.0
 

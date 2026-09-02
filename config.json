@@ -11,10 +11,18 @@
     "show_sender": true,
     "decorative_border": true,
     
-    "print_images": false,
+    "print_images": true,
     "_print_images_help": "Set to true to print images (requires Pillow: pip3 install Pillow)",
+
+    "print_video_frames": true,
+    "_print_video_frames_help": "Print a still frame for videos (e.g. shared Instagram reels). Uses macOS Quick Look, no extra install needed.",
     
-    "printer_address": "F704658C-55F3-B15A-CBB4-9D58CC406D64",
+    "printer_address": "",
     "printer_name": "BlueTooth Printer",
-    "_printer_help": "Set printer_address to your printer's BLE address from --scan. Leave empty for auto-discovery."
+    "_printer_help": "Leave empty to auto-discover the printer by name (portable across machines). macOS assigns each Mac its OWN BLE address for the same printer, so a hardcoded address only works on the machine it came from. To pin it for faster startup, use the address from --scan on THIS machine.",
+
+    "beeper_enabled": true,
+    "beeper_networks": ["whatsapp", "instagram", "imessage"],
+    "beeper_base_url": "http://127.0.0.1:23373",
+    "_beeper_help": "Requires Beeper Desktop running with a BEEPER_ACCESS_TOKEN set in a local .env file (see README). Safe to leave enabled on machines without Beeper Desktop -- it disables itself for the session if unreachable. If 'imessage' is listed here and Beeper has iMessage connected, it's used instead of chat.db (no Full Disk Access needed)."
 }

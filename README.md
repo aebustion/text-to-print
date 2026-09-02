@@ -1,8 +1,8 @@
 # 📱➡️🖨️ Text-to-Print (Mac Only Edition)
 
-Automatically print incoming text messages from your iPhone to a thermal receipt printer.
+Automatically print incoming messages — iMessage, WhatsApp, Instagram — to a thermal receipt printer.
 
-Uses **Bluetooth Low Energy (BLE)** for reliable communication with GOOJPRT PT-210 printers.
+Uses **Bluetooth Low Energy (BLE)** for reliable communication with GOOJPRT PT-210 printers. WhatsApp/Instagram (and any other network Beeper bridges) come in via the local [Beeper Desktop API](https://developers.beeper.com/desktop-api).
 
 ## How It Works
 
@@ -64,6 +64,45 @@ python3 text_printer.py
 
 Send yourself a text message — it should print within seconds!
 
+## WhatsApp / Instagram / iMessage Setup (via Beeper)
+
+Non-iMessage networks print through [Beeper Desktop](https://www.beeper.com)'s local API. Beeper can *also* supply iMessage, which is useful if Full Disk Access to `chat.db` isn't available (for example on a Mac managed by an MDM policy that locks it).
+
+1. **Install Beeper Desktop** and connect the accounts you want to print.
+2. **Create an API token**: in Beeper Desktop, go to **Settings → Integrations**, click the **"+"** next to "Approved connections", and follow the prompt.
+3. **Save the token locally** (never commit it):
+   ```bash
+   cp .env.example .env    # then paste your token into .env
+   ```
+4. Leave Beeper Desktop running, then start the monitor as usual.
+
+Tokens expire. When one does, printing stops and the log says the token is
+expired or invalid — create a new one and update `.env`.
+
+### Secrets and machine-specific settings
+
+Everything secret or machine-specific lives in `.env`, which is gitignored, so
+this repo is safe to make public. `.env.example` is the committed template.
+
+| Value | Where it goes | Why |
+|-------|---------------|-----|
+| `BEEPER_ACCESS_TOKEN` | `.env` | Secret. Read-only scope, local to your machine, and expires. |
+| `PRINTER_ADDRESS` | `.env` | Not secret, but macOS gives each Mac a different BLE address for the same printer. |
+| Everything else | `config.json` | Portable across machines, safe to commit. |
+
+`PRINTER_ADDRESS` overrides `printer_address` in config.json when set.
+
+### Where iMessage comes from
+
+- List `"imessage"` in `beeper_networks` → iMessage arrives via Beeper, and **no Full Disk Access is needed**.
+- Leave it out → the script reads `~/Library/Messages/chat.db` directly, which *does* require Full Disk Access.
+
+The monitor prints which source it chose at startup. If Beeper Desktop isn't running or installed, it logs a warning, disables Beeper for the session, and falls back to `chat.db`.
+
+Receipts from non-iMessage networks get a `[WhatsApp]` / `[Instagram]` tag, and group chats get an `In: <chat name>` line.
+
+> **Implementation note:** Beeper's macOS iMessage support is a built-in automation library rather than a Matrix bridge, so it does not appear in `/v1/accounts` or `/v1/bridges` and is missing from the `/v1/messages/search` index. This project therefore reads from `/v1/chats` + `/v1/chats/{chatID}/messages`, which covers every network uniformly.
+
 ## Commands
 
 | Command | Description |
@@ -88,6 +127,9 @@ Edit `config.json` to customize behavior:
 | `show_sender` | `true` | Show sender on receipt |
 | `decorative_border` | `true` | Add decorative borders |
 | `print_images` | `false` | Print image attachments (requires Pillow) |
+| `beeper_enabled` | `false` | Print messages via the Beeper Desktop API |
+| `beeper_networks` | `["whatsapp", "instagram"]` | Which Beeper networks to print. Include `"imessage"` to source iMessage from Beeper instead of `chat.db` |
+| `beeper_base_url` | `http://127.0.0.1:23373` | Beeper Desktop API address (rarely needs changing) |
 
 ### Filter by Contact
 
@@ -169,6 +211,25 @@ Grant Full Disk Access to Terminal (see step 2 above).
 - Make sure the PT-210 is **turned ON**
 - Move the printer closer to your Mac
 - Try turning the printer off and on again
+
+### `--scan` exits immediately with no output (crash)
+
+macOS requires the running binary to declare `NSBluetoothAlwaysUsageDescription`
+in its `Info.plist` before it may scan for Bluetooth devices. Homebrew's `python3`
+doesn't, so the OS kills the process the moment a scan starts (SIGABRT, no error
+message). Confirm it with:
+
+```bash
+ls -t ~/Library/Logs/DiagnosticReports/Python-*.ips | head -1
+```
+
+The crash report names TCC and `NSBluetoothAlwaysUsageDescription`.
+
+Connecting to an already-known address does **not** hit this, so the workaround is
+to pin the address instead of scanning: set `PRINTER_ADDRESS` in `.env` (see
+`.env.example`). To find the address, run `--scan` from a Python that does declare
+the key — python.org's framework build, or any terminal already granted Bluetooth
+access — or reuse the address from a machine where scanning works.
 
 ### Messages not appearing
 

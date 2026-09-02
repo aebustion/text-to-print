@@ -20,8 +20,16 @@ import sys
 import sqlite3
 import os
 import json
+import re
+import html
+import shutil
+import mimetypes
+import subprocess
+import tempfile
 import textwrap
-from datetime import datetime
+import unicodedata
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 import logging
@@ -33,6 +41,21 @@ except ImportError:
     print("❌ bleak library not installed!")
     print("   Run: pip3 install bleak")
     sys.exit(1)
+
+# Beeper Desktop API client
+try:
+    import requests
+except ImportError:
+    print("❌ requests library not installed!")
+    print("   Run: pip3 install requests")
+    sys.exit(1)
+
+# Load BEEPER_ACCESS_TOKEN from a local .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Configure logging
 logging.basicConfig(
@@ -237,8 +260,58 @@ def _convert_heic_to_pil(image_path: str):
             logger.error(f"sips conversion failed: {result.stderr}")
     except Exception as e:
         logger.error(f"HEIC conversion error: {e}")
-    
+
     return None
+
+
+@contextmanager
+def video_poster_frame(video_path: str, mime_type: str = '', filename: str = ''):
+    """
+    Yield a path to a still frame extracted from a video, or None on failure.
+
+    Uses macOS Quick Look (`qlmanage`), which is built in, so shared Instagram
+    reels and other video attachments can be printed without requiring ffmpeg.
+
+    Quick Look picks its generator from the file extension, and Beeper stores
+    media under extensionless content-hash filenames, so the video is staged to
+    a correctly-suffixed temp copy first. The temp directory (and the extracted
+    frame in it) is removed when the caller is done.
+    """
+    tmpdir = tempfile.mkdtemp(prefix='text-to-print-')
+    frame = None
+
+    try:
+        # Prefer the original filename's extension: iMessage attachments carry a
+        # real name (ScreenRecording....mov) but no mimeType, while Instagram is
+        # the reverse -- a mimeType with an extensionless content-hash path.
+        ext = (
+            os.path.splitext(filename or '')[1]
+            or mimetypes.guess_extension(mime_type or '')
+            or os.path.splitext(video_path)[1]
+            or '.mp4'
+        )
+        staged = os.path.join(tmpdir, f'video{ext}')
+        shutil.copyfile(video_path, staged)
+
+        subprocess.run(
+            ['qlmanage', '-t', '-s', '512', '-o', tmpdir, staged],
+            capture_output=True,
+            timeout=60,
+        )
+
+        thumbnails = [f for f in os.listdir(tmpdir) if f.lower().endswith('.png')]
+        if thumbnails:
+            frame = os.path.join(tmpdir, thumbnails[0])
+        else:
+            logger.debug(f"Quick Look produced no frame for {video_path}")
+
+    except Exception as e:
+        logger.debug(f"Video frame extraction failed: {e}")
+
+    try:
+        yield frame
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[bytes]:
@@ -348,14 +421,32 @@ def prepare_image_for_print(image_path: str, max_width: int = 384) -> Optional[b
         return None
 
 
+# Typographic characters that phones insert automatically. The printer only
+# speaks ASCII, so without these "don't" would print as "don?t".
+SMART_PUNCT_MAP = {
+    '‘': "'", '’': "'", '‚': ",", '‛': "'",   # single quotes
+    '“': '"', '”': '"', '„': '"', '‟': '"',   # double quotes
+    '–': '-', '—': '--', '―': '--', '−': '-',  # dashes
+    '…': '...',                                               # ellipsis
+    ' ': ' ', ' ': ' ', ' ': ' ', '​': '',     # spaces
+    '•': '*', '·': '*',                                  # bullets
+    '«': '<<', '»': '>>',                                # guillemets
+    '™': '(TM)', '®': '(R)', '©': '(C)',
+    '½': '1/2', '¼': '1/4', '¾': '3/4',
+    '°': ' deg',
+}
+
+
 def convert_emojis(text: str) -> str:
-    """Convert emojis in text to ASCII emoticons."""
+    """Convert emojis and smart punctuation in text to printable ASCII."""
     for emoji, replacement in EMOJI_MAP.items():
         text = text.replace(emoji, replacement)
-    
+
+    for char, replacement in SMART_PUNCT_MAP.items():
+        text = text.replace(char, replacement)
+
     # Replace any remaining emojis with [?]
     # This catches emojis not in our dictionary
-    import re
     emoji_pattern = re.compile(
         "["
         "\U0001F600-\U0001F64F"  # emoticons
@@ -367,12 +458,32 @@ def convert_emojis(text: str) -> str:
         "\U0001FA00-\U0001FA6F"  # chess symbols
         "\U0001FA70-\U0001FAFF"  # symbols
         "\U00002600-\U000026FF"  # misc symbols
-        "]+", 
+        "\U0001F7E0-\U0001F7FF"  # geometric shapes extended (colored squares)
+        "\U00002190-\U000021FF"  # arrows
+        "\U00002B00-\U00002BFF"  # misc symbols & arrows
+        "\U0000FE00-\U0000FE0F"  # variation selectors
+        "\U0001F000-\U0001F02F"  # mahjong tiles
+        "]+",
         flags=re.UNICODE
     )
     text = emoji_pattern.sub('[?]', text)
-    
+
+    # Strip accents so names like "José" print as "Jose" rather than "Jos?".
+    # Non-Latin scripts decompose to themselves and are left for the printer's
+    # encode step to handle, same as before.
+    decomposed = unicodedata.normalize('NFKD', text)
+    text = ''.join(c for c in decomposed if not unicodedata.combining(c))
+
     return text
+
+
+def strip_beeper_html(text: str) -> str:
+    """Convert Beeper's rich-text HTML message bodies (WhatsApp/Instagram/etc.) to plain text."""
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p>\s*<p[^>]*>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<a\b[^>]*>(.*?)</a>', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<[^>]+>', '', text)
+    return html.unescape(text).strip()
 
 
 # =============================================================================
@@ -390,15 +501,17 @@ class BLEPrinter:
     
     async def discover(self) -> Optional[str]:
         """Discover printer via BLE scan or use configured address."""
-        # Check if we have a configured printer address
-        configured_address = self.config.get('printer_address')
+        # PRINTER_ADDRESS in .env wins over config.json. macOS gives each Mac its
+        # own BLE address for the same printer, so keeping it in the untracked
+        # .env lets config.json stay machine-independent and safe to commit.
+        configured_address = os.environ.get('PRINTER_ADDRESS') or self.config.get('printer_address')
         configured_name = self.config.get('printer_name', '')
-        
+
         if configured_address:
             logger.info(f"Using configured printer: {configured_name or configured_address}")
             self.device_address = configured_address
             return configured_address
-        
+
         logger.info("Scanning for BLE printers...")
         
         devices = await BleakScanner.discover(timeout=10.0)
@@ -863,26 +976,28 @@ class MessageMonitor:
                 if row['is_from_me'] and not self.config.get('include_sent_messages', False):
                     continue
                 
-                # Skip empty messages
-                if not row['text']:
+                # Check for attachments (images, etc.)
+                has_attachment = bool(row['cache_has_attachments'])
+                attachments = []
+
+                if has_attachment:
+                    attachments = self._get_attachments(row['ROWID'], cursor)
+
+                # Skip messages with neither text nor media. Photos and videos
+                # usually arrive with no caption, so an empty body alone is not
+                # a reason to drop the message.
+                if not row['text'] and not attachments:
                     continue
-                
+
                 # Apply contact filter if specified
                 filter_contacts = self.config.get('filter_contacts', [])
                 if filter_contacts and row['handle_id'] not in filter_contacts:
                     continue
-                
+
                 # Get contact name if available, otherwise use phone/email
                 handle_id = row['handle_id'] or 'Unknown'
                 contact_name = self.contacts.get_name(handle_id)
-                
-                # Check for attachments (images, etc.)
-                has_attachment = bool(row['cache_has_attachments'])
-                attachments = []
-                
-                if has_attachment:
-                    attachments = self._get_attachments(row['ROWID'], cursor)
-                
+
                 messages.append({
                     'id': row['ROWID'],
                     'text': row['text'] or '',
@@ -892,6 +1007,7 @@ class MessageMonitor:
                     'is_from_me': bool(row['is_from_me']),
                     'has_attachment': has_attachment,
                     'attachments': attachments,
+                    'source': 'iMessage',
                 })
             
             conn.close()
@@ -903,8 +1019,319 @@ class MessageMonitor:
 
 
 # =============================================================================
+# BEEPER MONITOR (WhatsApp, Instagram, etc. via the Beeper Desktop API)
+# =============================================================================
+
+class BeeperMonitor:
+    """
+    Monitors messages via the local Beeper Desktop API.
+
+    Works off the chat/message list endpoints rather than /v1/messages/search,
+    because Beeper's macOS iMessage support is a built-in automation library
+    rather than a Matrix bridge: it has no entry in /v1/accounts or /v1/bridges
+    and is absent from the search index, but it does show up in /v1/chats and
+    /v1/chats/{chatID}/messages alongside every bridged network.
+    """
+
+    def __init__(self, config: dict):
+        self.config = config
+        self.base_url = config.get('beeper_base_url', 'http://127.0.0.1:23373').rstrip('/')
+        self.token = os.environ.get('BEEPER_ACCESS_TOKEN', '')
+        self.networks = {n.lower() for n in config.get('beeper_networks', ['whatsapp', 'instagram'])}
+        self.state_file = Path(__file__).parent / ".last_beeper_timestamp"
+
+        self.enabled = bool(config.get('beeper_enabled', False) and self.token)
+        if self.enabled:
+            self.enabled = self._check_connection()
+
+        # Only print messages that arrive after startup (mirrors the iMessage monitor).
+        self.floor = self._load_last_seen()
+
+        # Newest timestamp already printed, tracked per chat rather than globally.
+        # A single shared watermark loses messages: iMessage is local and instant
+        # while bridged networks (WhatsApp/Instagram) sync with a delay, so a fast
+        # iMessage would push a global watermark past a slower message that hadn't
+        # arrived yet, skipping it permanently.
+        self.chat_cursors = {}
+
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.token}"}
+
+    def _report_expired_token(self):
+        """Explain how to fix an expired or rejected access token."""
+        logger.error("Beeper access token is expired or invalid. Beeper monitoring is off.")
+        logger.error("  To fix: in Beeper Desktop go to Settings -> Integrations, click the")
+        logger.error("  '+' next to 'Approved connections' to create a new token, then update")
+        logger.error(f"  BEEPER_ACCESS_TOKEN in {Path(__file__).parent / '.env'} and restart.")
+
+    def _check_connection(self) -> bool:
+        """
+        Verify the Beeper Desktop API is running and the token is currently valid.
+
+        Deliberately calls an authenticated endpoint: /v1/info is served without
+        auth, so it returns 200 even for an expired token and would report a
+        healthy connection that then fails on every poll.
+        """
+        try:
+            resp = requests.get(
+                f"{self.base_url}/v1/chats",
+                headers=self._headers(),
+                timeout=5,
+            )
+            if resp.status_code == 401:
+                self._report_expired_token()
+                return False
+            resp.raise_for_status()
+            logger.info(f"Beeper: watching {', '.join(sorted(self.networks))}")
+            return True
+        except Exception as e:
+            logger.warning(f"Beeper Desktop API not reachable ({e}). Disabling Beeper monitoring for this session.")
+            return False
+
+    def _fetch_active_chats(self) -> list:
+        """Return watched chats that have new activity, newest first."""
+        chats = []
+        cursor = None
+
+        # /v1/chats is ordered by lastActivity descending. The floor never moves,
+        # so we can always stop once we reach chats last active before startup.
+        for _ in range(10):  # safety cap
+            params = {}
+            if cursor:
+                params["cursor"] = cursor
+                params["direction"] = "before"
+
+            resp = requests.get(
+                f"{self.base_url}/v1/chats",
+                headers=self._headers(),
+                params=params,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            items = data.get('items', [])
+            reached_old_chats = False
+
+            for chat in items:
+                last_activity = chat.get('lastActivity') or ''
+                if last_activity <= self.floor:
+                    reached_old_chats = True
+                    break
+                if (chat.get('network') or '').lower() not in self.networks:
+                    continue
+                # Skip chats whose activity we've already caught up on.
+                if last_activity > self.chat_cursors.get(chat['id'], self.floor):
+                    chats.append(chat)
+
+            if reached_old_chats or not data.get('hasMore') or not data.get('oldestCursor'):
+                break
+            cursor = data['oldestCursor']
+
+        return chats
+
+    def _fetch_chat_messages(self, chat_id: str, since: str) -> list:
+        """Return raw messages in a chat newer than `since` (newest first per page)."""
+        from urllib.parse import quote
+
+        found = []
+        cursor = None
+        encoded_id = quote(chat_id, safe='')
+
+        for _ in range(10):  # safety cap: 10 * 20 = 200 messages per chat per poll
+            params = {}
+            if cursor:
+                params["cursor"] = cursor
+                params["direction"] = "before"
+
+            resp = requests.get(
+                f"{self.base_url}/v1/chats/{encoded_id}/messages",
+                headers=self._headers(),
+                params=params,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            items = data.get('items', [])
+            reached_old_messages = False
+
+            for msg in items:
+                if (msg.get('timestamp') or '') <= since:
+                    reached_old_messages = True
+                    continue
+                found.append(msg)
+
+            if reached_old_messages or not data.get('hasMore') or not data.get('oldestCursor'):
+                break
+            cursor = data['oldestCursor']
+
+        return found
+
+    def _load_last_seen(self) -> str:
+        """
+        Start fresh each run: only messages arriving after startup get printed.
+
+        Formatted to match Beeper's own timestamps (millisecond precision, 'Z'
+        suffix) so the ISO strings can be compared directly.
+        """
+        now = datetime.now(timezone.utc)
+        return f"{now.strftime('%Y-%m-%dT%H:%M:%S')}.{now.microsecond // 1000:03d}Z"
+
+    def _save_state(self):
+        self.state_file.write_text(json.dumps({
+            'floor': self.floor,
+            'chat_cursors': self.chat_cursors,
+        }, indent=2))
+
+    @staticmethod
+    def _file_url_to_path(url: str) -> Optional[str]:
+        """Convert a file:// URL to a local filesystem path."""
+        if url and url.startswith('file://'):
+            from urllib.parse import unquote, urlparse
+            return unquote(urlparse(url).path)
+        return None
+
+    def _resolve_attachment_path(self, att: dict) -> Optional[str]:
+        """
+        Get a local filesystem path for an attachment.
+
+        Beeper hands these over in two shapes: iMessage attachments come with a
+        direct file:// srcURL, while bridged networks give an mxc:// id that has
+        to be fetched through the download endpoint first.
+        """
+        path = self._file_url_to_path(att.get('srcURL') or '')
+        if path:
+            return path
+
+        identifier = att.get('id') or ''
+        if not identifier.startswith(('mxc://', 'localmxc://')):
+            return None
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/v1/assets/download",
+                headers=self._headers(),
+                json={"url": identifier},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            src_url = resp.json().get('srcURL') or ''
+            return self._file_url_to_path(src_url) or src_url or None
+        except Exception as e:
+            logger.debug(f"Beeper attachment download failed: {e}")
+            return None
+
+    def fetch_new_messages(self) -> list:
+        """Fetch messages newer than the last processed timestamp."""
+        if not self.enabled:
+            return []
+
+        messages = []
+
+        try:
+            for chat in self._fetch_active_chats():
+                network = chat.get('network') or 'Beeper'
+                is_group = chat.get('type') == 'group'
+                chat_id = chat['id']
+                since = self.chat_cursors.get(chat_id, self.floor)
+
+                raw_messages = self._fetch_chat_messages(chat_id, since)
+
+                # Advance this chat's cursor past everything examined, including
+                # messages filtered out below, so they aren't re-fetched forever.
+                for msg in raw_messages:
+                    ts = msg.get('timestamp') or ''
+                    if ts > self.chat_cursors.get(chat_id, since):
+                        self.chat_cursors[chat_id] = ts
+
+                for msg in raw_messages:
+                    if msg.get('isDeleted') or msg.get('isHidden'):
+                        continue
+
+                    # Skip sent messages unless configured to include them
+                    if msg.get('isSender') and not self.config.get('include_sent_messages', False):
+                        continue
+
+                    text = strip_beeper_html(msg.get('text') or '')
+                    raw_attachments = msg.get('attachments') or []
+
+                    # Photos and videos usually arrive with no caption at all, so
+                    # only skip a message when it has neither text nor media --
+                    # that leaves reactions and similar events filtered out.
+                    if not text and not raw_attachments:
+                        continue
+
+                    sender = msg.get('senderName') or msg.get('senderID') or 'Unknown'
+
+                    # Apply contact filter if specified
+                    filter_contacts = self.config.get('filter_contacts', [])
+                    if filter_contacts and sender not in filter_contacts and msg.get('senderID') not in filter_contacts:
+                        continue
+
+                    ts = msg.get('timestamp')
+                    # Naive local datetime, to stay comparable with MessageMonitor's timestamps
+                    timestamp = datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone().replace(tzinfo=None)
+
+                    attachments = []
+                    for att in raw_attachments:
+                        att_type_map = {'img': 'image', 'video': 'video', 'audio': 'audio'}
+                        att_type = att_type_map.get(att.get('type'), 'file')
+                        attachments.append({
+                            'type': att_type,
+                            'mime_type': att.get('mimeType') or '',
+                            'filename': att.get('fileName') or att_type,
+                            'filepath': self._resolve_attachment_path(att),
+                        })
+
+                    messages.append({
+                        'id': msg.get('id'),
+                        'text': text,
+                        'timestamp': timestamp,
+                        'sender': sender,
+                        'sender_id': msg.get('senderID'),
+                        'is_from_me': bool(msg.get('isSender')),
+                        'has_attachment': bool(attachments),
+                        'attachments': attachments,
+                        'source': network,
+                        'chat_title': chat.get('title') if is_group else None,
+                    })
+
+        except requests.HTTPError as e:
+            # A token that expires mid-run would otherwise log this on every
+            # poll; stop asking and tell the user how to fix it, once.
+            if e.response is not None and e.response.status_code == 401:
+                self.enabled = False
+                self._report_expired_token()
+            else:
+                logger.error(f"Beeper API error: {e}")
+        except Exception as e:
+            logger.error(f"Beeper API error: {e}")
+
+        messages.sort(key=lambda m: m['timestamp'])
+        return messages
+
+
+# =============================================================================
 # RECEIPT FORMATTING
 # =============================================================================
+
+def format_attachment_label(att: dict) -> str:
+    """
+    Build the '[Image: photo.jpg]' line for an attachment.
+
+    The filename is only worth printing when it's human-readable. iMessage gives
+    real names like IMG_3820.HEIC, but Instagram/WhatsApp use long opaque CDN ids
+    that would just fill a line of paper with noise.
+    """
+    label = {'image': 'Image', 'video': 'Video', 'audio': 'Audio'}.get(att.get('type'), 'File')
+    name = att.get('filename') or ''
+    _, ext = os.path.splitext(name)
+
+    if name and ext and len(name) <= 24:
+        return f"[{label}: {name}]"
+    return f"[{label}]"
+
 
 def format_receipt(message: dict, config: dict) -> str:
     """Format a message as a thermal printer receipt."""
@@ -921,9 +1348,19 @@ def format_receipt(message: dict, config: dict) -> str:
         ts = message['timestamp'].strftime("%b %d, %I:%M %p")
         lines.append(ts.center(width))
     
+    # Source app (only shown for non-iMessage sources, e.g. WhatsApp/Instagram)
+    source = message.get('source')
+    if source and source.lower() != 'imessage':
+        lines.append(f"[{source}]"[:width])
+
+    # Group chat title
+    chat_title = message.get('chat_title')
+    if chat_title:
+        lines.append(f"In: {convert_emojis(chat_title)}"[:width])
+
     # Sender
     if config.get('show_sender', True):
-        sender = message['sender']
+        sender = convert_emojis(message['sender'])
         if len(sender) > width - 6:
             sender = sender[:width - 9] + "..."
         lines.append(f"From: {sender}"[:width])
@@ -940,18 +1377,8 @@ def format_receipt(message: dict, config: dict) -> str:
         lines.extend(wrapped)
     
     # Show attachments
-    attachments = message.get('attachments', [])
-    if attachments:
-        for att in attachments:
-            att_type = att['type']
-            if att_type == 'image':
-                lines.append(f"[Image: {att['filename']}]"[:width])
-            elif att_type == 'video':
-                lines.append(f"[Video: {att['filename']}]"[:width])
-            elif att_type == 'audio':
-                lines.append(f"[Audio: {att['filename']}]"[:width])
-            else:
-                lines.append(f"[File: {att['filename']}]"[:width])
+    for att in message.get('attachments', []):
+        lines.append(format_attachment_label(att)[:width])
     
     # Bottom border
     if config.get('decorative_border', True):
@@ -980,7 +1407,10 @@ def load_config() -> dict:
         "paper_width_chars": 32,
         "show_timestamp": True,
         "show_sender": True,
-        "decorative_border": True
+        "decorative_border": True,
+        "beeper_enabled": False,
+        "beeper_networks": ["whatsapp", "instagram"],
+        "beeper_base_url": "http://127.0.0.1:23373",
     }
 
 
@@ -1101,6 +1531,57 @@ async def cmd_explore():
         print(f"Error: {e}")
 
 
+def is_readable(path: str) -> bool:
+    """
+    Check a file can actually be opened.
+
+    os.path.exists() is not enough: macOS reports protected paths such as
+    ~/Library/Messages/Attachments as existing, then denies the read. iMessage
+    media lives there, so without Full Disk Access it looks present but isn't.
+    """
+    try:
+        with open(path, 'rb') as f:
+            f.read(1)
+        return True
+    except (PermissionError, OSError):
+        return False
+
+
+async def print_attachment(printer: 'BLEPrinter', att: dict, config: dict):
+    """Print an image attachment, or a still frame for a video attachment."""
+    filepath = att.get('filepath')
+    att_type = att.get('type')
+    label = att.get('filename') or att_type
+
+    if not filepath:
+        return
+
+    if not is_readable(filepath):
+        # The receipt still prints with an [Image]/[Video] line, so the message
+        # itself is never lost -- only the picture is missing.
+        logger.warning(f"  ⚠ No permission to read {att_type} ({label}); printed the text receipt only")
+        logger.warning("     Grant Full Disk Access to print iMessage photos and videos.")
+        return
+
+    if att_type == 'image':
+        logger.info(f"  Printing image: {label}")
+        if await printer.print_image(filepath):
+            logger.info("  ✓ Image printed!")
+        else:
+            logger.warning("  ⚠ Image print failed")
+
+    elif att_type == 'video' and config.get('print_video_frames', True):
+        logger.info(f"  Extracting frame from video: {label}")
+        with video_poster_frame(filepath, att.get('mime_type', ''), att.get('filename', '')) as frame:
+            if not frame:
+                logger.warning("  ⚠ Could not extract a video frame")
+                return
+            if await printer.print_image(frame):
+                logger.info("  ✓ Video frame printed!")
+            else:
+                logger.warning("  ⚠ Video frame print failed")
+
+
 async def cmd_monitor():
     """Main monitoring loop."""
     print()
@@ -1108,35 +1589,50 @@ async def cmd_monitor():
     print("  📱➡️🖨️  Text-to-Print")
     print("=" * 50)
     print()
-    
-    # Check database access
-    if not check_database_access():
-        return
-    
+
     config = load_config()
-    monitor = MessageMonitor(config)
+
+    # If "imessage" is listed in beeper_networks and Beeper is reachable, iMessage
+    # comes through Beeper -- which needs no Full Disk Access, handy when it's
+    # blocked by an MDM policy. Otherwise fall back to reading chat.db directly.
+    beeper = BeeperMonitor(config)
+    imessage_via_beeper = beeper.enabled and 'imessage' in beeper.networks
+
+    monitor = None
+    if not imessage_via_beeper:
+        if not check_database_access():
+            return
+        monitor = MessageMonitor(config)
+
     printer = BLEPrinter(config)
-    
+
     # Connect to printer
     print("\nConnecting to printer via BLE...")
     if not await printer.connect():
         print("❌ Could not connect to printer")
         print("   Run with --scan to find available devices")
         return
-    
+
     print()
     print("Configuration:")
     print(f"  Poll interval: {config.get('poll_interval_seconds', 2)}s")
     print(f"  Filter contacts: {config.get('filter_contacts') or 'All'}")
     print(f"  Include sent: {config.get('include_sent_messages', False)}")
+    if config.get('beeper_enabled', False):
+        status = f"watching {', '.join(sorted(beeper.networks))}" if beeper.enabled else "unavailable"
+        print(f"  Beeper: {status}")
+    print(f"  iMessage source: {'Beeper' if imessage_via_beeper else 'chat.db'}")
     print()
     print("-" * 50)
     logger.info("Monitoring for new messages... (Ctrl+C to stop)")
-    
+
     try:
         while True:
-            messages = monitor.fetch_new_messages()
-            
+            messages = beeper.fetch_new_messages()
+            if monitor:
+                messages = monitor.fetch_new_messages() + messages
+            messages.sort(key=lambda m: m['timestamp'])
+
             for msg in messages:
                 # Log the message
                 direction = "→" if msg['is_from_me'] else "←"
@@ -1161,23 +1657,20 @@ async def cmd_monitor():
                 # Print images if enabled
                 if config.get('print_images', False):
                     for att in msg.get('attachments', []):
-                        if att['type'] == 'image' and att.get('filepath'):
-                            filepath = att['filepath']
-                            if os.path.exists(filepath):
-                                logger.info(f"  Printing image: {att['filename']}")
-                                if await printer.print_image(filepath):
-                                    logger.info("  ✓ Image printed!")
-                                else:
-                                    logger.warning("  ⚠ Image print failed")
+                        await print_attachment(printer, att, config)
             
             if messages:
-                monitor._save_state()
-            
+                if monitor:
+                    monitor._save_state()
+                beeper._save_state()
+
             await asyncio.sleep(config.get('poll_interval_seconds', 2))
-            
+
     except KeyboardInterrupt:
         print("\n\nStopping...")
-        monitor._save_state()
+        if monitor:
+            monitor._save_state()
+        beeper._save_state()
         await printer.disconnect()
         print("Goodbye! 👋")
 
