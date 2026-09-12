@@ -1,28 +1,26 @@
 {
     "poll_interval_seconds": 2,
-    
+
+    "beeper_networks": ["imessage", "whatsapp", "instagram"],
+    "_beeper_networks_help": "Which Beeper networks to print. Must match the network names Beeper reports (case-insensitive), e.g. iMessage, WhatsApp, Instagram, Facebook, Slack, Signal, Telegram.",
+
+    "beeper_base_url": "http://127.0.0.1:23373",
+
     "filter_contacts": [],
-    "_filter_contacts_help": "Empty = all contacts. Example: ['+15551234567', 'friend@icloud.com']",
-    
+    "_filter_contacts_help": "Empty = everyone. Otherwise a list of sender names or IDs to print, e.g. ['Mom', '+15551234567']",
+
     "include_sent_messages": false,
-    
+
     "paper_width_chars": 32,
     "show_timestamp": true,
     "show_sender": true,
     "decorative_border": true,
-    
-    "print_images": true,
-    "_print_images_help": "Set to true to print images (requires Pillow: pip3 install Pillow)",
 
+    "print_images": true,
     "print_video_frames": true,
-    "_print_video_frames_help": "Print a still frame for videos (e.g. shared Instagram reels). Uses macOS Quick Look, no extra install needed.",
-    
+    "_print_media_help": "print_images prints photo attachments; print_video_frames prints a still frame for videos (e.g. shared reels) via macOS Quick Look. iMessage media needs Full Disk Access -- without it the receipt still prints, just without the picture.",
+
     "printer_address": "",
     "printer_name": "BlueTooth Printer",
-    "_printer_help": "Leave empty to auto-discover the printer by name (portable across machines). macOS assigns each Mac its OWN BLE address for the same printer, so a hardcoded address only works on the machine it came from. To pin it for faster startup, use the address from --scan on THIS machine.",
-
-    "beeper_enabled": true,
-    "beeper_networks": ["whatsapp", "instagram", "imessage"],
-    "beeper_base_url": "http://127.0.0.1:23373",
-    "_beeper_help": "Requires Beeper Desktop running with a BEEPER_ACCESS_TOKEN set in a local .env file (see README). Safe to leave enabled on machines without Beeper Desktop -- it disables itself for the session if unreachable. If 'imessage' is listed here and Beeper has iMessage connected, it's used instead of chat.db (no Full Disk Access needed)."
+    "_printer_help": "Leave printer_address empty to auto-discover by name. macOS gives each Mac its OWN BLE address for the same printer, so set PRINTER_ADDRESS in .env rather than committing an address here. Get it with --scan."
 }

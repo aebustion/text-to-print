@@ -1,107 +1,84 @@
 # 📱➡️🖨️ Text-to-Print (Mac Only Edition)
 
-Automatically print incoming messages — iMessage, WhatsApp, Instagram — to a thermal receipt printer.
-
-Uses **Bluetooth Low Energy (BLE)** for reliable communication with GOOJPRT PT-210 printers. WhatsApp/Instagram (and any other network Beeper bridges) come in via the local [Beeper Desktop API](https://developers.beeper.com/desktop-api).
+Automatically print incoming messages — iMessage, WhatsApp, Instagram and anything else
+Beeper connects — to a Bluetooth thermal receipt printer.
 
 ## How It Works
 
 ```
-┌─────────────┐  iCloud   ┌─────────────┐   BLE    ┌─────────────┐
-│   iPhone    │ ────────► │     Mac     │ ──────►  │   PT-210    │
-│  (Messages) │   sync    │  (Monitor)  │          │  (Printer)  │
-└─────────────┘           └─────────────┘          └─────────────┘
+┌─────────────┐          ┌─────────────┐          ┌─────────────┐
+│  iMessage   │          │   Beeper    │   BLE    │   PT-210    │
+│  WhatsApp   │ ───────► │   Desktop   │ ───────► │  (Printer)  │
+│  Instagram  │  bridges │  local API  │          │             │
+└─────────────┘          └─────────────┘          └─────────────┘
+                                 ▲
+                                 │ polls every 2s
+                          ┌──────┴───────┐
+                          │text_printer.py│
+                          └──────────────┘
 ```
 
-1. Messages sync from iPhone to Mac via iCloud
-2. Python script monitors the Messages database
-3. New messages are sent to the PT-210 via Bluetooth Low Energy
-4. Printer outputs a receipt with the message
+1. Beeper Desktop connects your chat networks and exposes them on a **local** API
+   (`127.0.0.1:23373`) — nothing leaves your machine
+2. This script polls that API for new messages
+3. Each new message is formatted as a receipt and sent to the printer over
+   Bluetooth Low Energy
+
+Reading messages through Beeper means the script needs **no Full Disk Access** of its
+own, which matters on Macs where that permission is locked down by an MDM policy.
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
-cd text-to-print-mac-only
-pip3 install -r requirements.txt
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 2. Grant Full Disk Access
+A virtualenv isn't optional on Homebrew Python — it refuses system-wide installs.
 
-The script needs permission to read the Messages database:
+### 2. Set up Beeper
 
-1. Open **System Settings → Privacy & Security → Full Disk Access**
-2. Click the lock 🔒 to make changes
-3. Add **Terminal** (or your Python IDE)
-4. Restart Terminal
+1. Install [Beeper Desktop](https://www.beeper.com) and connect the accounts you want
+   to print (iMessage, WhatsApp, Instagram, …).
+2. Create an API token: **Settings → Integrations → "+"** next to "Approved connections".
+3. Save it locally:
+   ```bash
+   cp .env.example .env     # then paste your token into .env
+   ```
 
-### 3. Turn On Your Printer
+Beeper Desktop must be **running** for the script to see any messages.
 
-Make sure the PT-210 is powered on and in range of your Mac.
+> Tokens expire. When one does, printing stops and the log tells you the token is
+> expired or invalid — create a new one and update `.env`.
 
-### 4. Scan for Printer
+### 3. Find your printer
+
+Turn the printer on, then:
 
 ```bash
 python3 text_printer.py --scan
 ```
 
-Look for "PT-210" in the device list.
+Put the address it reports into `.env` as `PRINTER_ADDRESS`. (If `--scan` crashes
+immediately, see [Troubleshooting](#--scan-exits-immediately-with-no-output).)
 
-### 5. Test Print
+### 4. Test print
 
 ```bash
 python3 text_printer.py --test
 ```
 
-You should see a test receipt print!
-
-### 6. Run the Monitor
+### 5. Run the monitor
 
 ```bash
 python3 text_printer.py
 ```
 
-Send yourself a text message — it should print within seconds!
-
-## WhatsApp / Instagram / iMessage Setup (via Beeper)
-
-Non-iMessage networks print through [Beeper Desktop](https://www.beeper.com)'s local API. Beeper can *also* supply iMessage, which is useful if Full Disk Access to `chat.db` isn't available (for example on a Mac managed by an MDM policy that locks it).
-
-1. **Install Beeper Desktop** and connect the accounts you want to print.
-2. **Create an API token**: in Beeper Desktop, go to **Settings → Integrations**, click the **"+"** next to "Approved connections", and follow the prompt.
-3. **Save the token locally** (never commit it):
-   ```bash
-   cp .env.example .env    # then paste your token into .env
-   ```
-4. Leave Beeper Desktop running, then start the monitor as usual.
-
-Tokens expire. When one does, printing stops and the log says the token is
-expired or invalid — create a new one and update `.env`.
-
-### Secrets and machine-specific settings
-
-Everything secret or machine-specific lives in `.env`, which is gitignored, so
-this repo is safe to make public. `.env.example` is the committed template.
-
-| Value | Where it goes | Why |
-|-------|---------------|-----|
-| `BEEPER_ACCESS_TOKEN` | `.env` | Secret. Read-only scope, local to your machine, and expires. |
-| `PRINTER_ADDRESS` | `.env` | Not secret, but macOS gives each Mac a different BLE address for the same printer. |
-| Everything else | `config.json` | Portable across machines, safe to commit. |
-
-`PRINTER_ADDRESS` overrides `printer_address` in config.json when set.
-
-### Where iMessage comes from
-
-- List `"imessage"` in `beeper_networks` → iMessage arrives via Beeper, and **no Full Disk Access is needed**.
-- Leave it out → the script reads `~/Library/Messages/chat.db` directly, which *does* require Full Disk Access.
-
-The monitor prints which source it chose at startup. If Beeper Desktop isn't running or installed, it logs a warning, disables Beeper for the session, and falls back to `chat.db`.
-
-Receipts from non-iMessage networks get a `[WhatsApp]` / `[Instagram]` tag, and group chats get an `In: <chat name>` line.
-
-> **Implementation note:** Beeper's macOS iMessage support is a built-in automation library rather than a Matrix bridge, so it does not appear in `/v1/accounts` or `/v1/bridges` and is missing from the `/v1/messages/search` index. This project therefore reads from `/v1/chats` + `/v1/chats/{chatID}/messages`, which covers every network uniformly.
+Send yourself a message — it should print within seconds. Only messages that arrive
+*after* startup are printed, so you'll never get a backlog dumped on you.
 
 ## Commands
 
@@ -110,61 +87,60 @@ Receipts from non-iMessage networks get a `[WhatsApp]` / `[Instagram]` tag, and 
 | `python3 text_printer.py` | Run the message monitor |
 | `python3 text_printer.py --test` | Print a test page |
 | `python3 text_printer.py --scan` | Scan for BLE printers |
-| `python3 text_printer.py --explore` | Explore printer's BLE services |
+| `python3 text_printer.py --explore` | Explore the printer's BLE services |
 | `python3 text_printer.py --help` | Show help |
 
 ## Configuration
 
-Edit `config.json` to customize behavior:
+### Secrets and machine-specific values → `.env`
+
+`.env` is gitignored, so this repo is safe to publish. `.env.example` is the template.
+
+| Value | Why it lives here |
+|-------|-------------------|
+| `BEEPER_ACCESS_TOKEN` | Secret. Read-only scope, local to your machine, expires. |
+| `PRINTER_ADDRESS` | Not secret, but macOS gives each Mac a *different* BLE address for the same printer. Overrides `printer_address` in config.json. |
+
+### Everything else → `config.json`
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `poll_interval_seconds` | `2` | How often to check for new messages |
-| `filter_contacts` | `[]` | Only print from these contacts (empty = all) |
+| `beeper_networks` | `["imessage", "whatsapp", "instagram"]` | Which networks to print |
+| `beeper_base_url` | `http://127.0.0.1:23373` | Beeper Desktop API address |
+| `filter_contacts` | `[]` | Only print from these senders (empty = everyone) |
 | `include_sent_messages` | `false` | Also print messages you send |
 | `paper_width_chars` | `32` | Characters per line (58mm paper = 32) |
 | `show_timestamp` | `true` | Show time on receipt |
 | `show_sender` | `true` | Show sender on receipt |
 | `decorative_border` | `true` | Add decorative borders |
-| `print_images` | `false` | Print image attachments (requires Pillow) |
-| `beeper_enabled` | `false` | Print messages via the Beeper Desktop API |
-| `beeper_networks` | `["whatsapp", "instagram"]` | Which Beeper networks to print. Include `"imessage"` to source iMessage from Beeper instead of `chat.db` |
-| `beeper_base_url` | `http://127.0.0.1:23373` | Beeper Desktop API address (rarely needs changing) |
+| `print_images` | `true` | Print photo attachments |
+| `print_video_frames` | `true` | Print a still frame for videos |
+| `printer_address` | `""` | Empty = auto-discover by name |
+| `printer_name` | `"BlueTooth Printer"` | Name shown in logs; auto-discovery also matches on it |
 
-### Filter by Contact
-
-Only print messages from specific people:
-
-```json
-"filter_contacts": ["+15551234567", "mom@icloud.com"]
-```
+`beeper_networks` matches the network names Beeper reports (case-insensitive), so you
+can add `"facebook"`, `"slack"`, `"signal"`, `"telegram"` and so on.
 
 ## Features
 
-### 📇 Contact Names
-The script looks up contact names from your Mac's Contacts app. Instead of seeing "+15551234567", you'll see "Mom" (if they're in your contacts).
+### 🖨️ Receipts
+Each message prints with the time, sender, and — for anything that isn't iMessage — a
+`[WhatsApp]` / `[Instagram]` tag. Group chats also get an `In: <chat name>` line.
 
-### 😀 Emoji Support
-Emojis are automatically converted to ASCII emoticons:
-- 😀 → :D
-- ❤️ → <3
-- 👍 → (thumbs up)
-- And 200+ more!
+### 😀 ASCII conversion
+The printer speaks ASCII only, so emoji become emoticons (😀 → `:D`, 👍 → `(thumbs up)`,
+200+ mapped), smart punctuation is normalized (`can't` → `can't`, `—` → `--`), and
+accents are stripped (`José` → `Jose`). Without this they'd all print as `?`.
 
-### 📎 Attachment Detection
-When someone sends an image, video, or file, the receipt shows:
-```
-[Image: photo.jpg]
-```
+### 🖼️ Photos and video frames
+Photos print directly. Videos — including shared Instagram reels — print a still frame
+extracted with macOS Quick Look, so no ffmpeg install is needed.
 
-### 🖼️ Image Printing (Optional)
-To print actual images, enable it in config.json:
-```json
-"print_images": true
-```
-And install Pillow: `pip3 install Pillow`
-
-Images are automatically converted to black & white and sized for the receipt paper.
+**iMessage media is the exception.** Those files live in
+`~/Library/Messages/Attachments/`, which requires Full Disk Access. Without it the
+receipt still prints with a `[Video: IMG_1234.mov]` line, just no picture. Grant Full
+Disk Access to your terminal and iMessage photos start printing automatically.
 
 ## Run at Startup (Optional)
 
@@ -179,9 +155,11 @@ Create `~/Library/LaunchAgents/com.texttoprint.plist`:
     <string>com.texttoprint</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
-        <string>/path/to/text-to-print-mac-only/text_printer.py</string>
+        <string>/path/to/text-to-print/venv/bin/python3</string>
+        <string>/path/to/text-to-print/text_printer.py</string>
     </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/text-to-print</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -200,24 +178,37 @@ Load it:
 launchctl load ~/Library/LaunchAgents/com.texttoprint.plist
 ```
 
+Use the venv's Python and set `WorkingDirectory` so `.env` and `config.json` are found.
+
 ## Troubleshooting
 
-### "Permission denied" when reading Messages
+### Nothing prints / "Could not reach Beeper Desktop"
 
-Grant Full Disk Access to Terminal (see step 2 above).
+- Is Beeper Desktop **running**? The API only exists while the app is open.
+- Is your token current? Check it directly:
+  ```bash
+  source .env
+  curl -s -X POST http://127.0.0.1:23373/oauth/introspect \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "token=$BEEPER_ACCESS_TOKEN&token_type_hint=access_token"
+  ```
+  `{"active": false}` means it expired — create a new one.
 
-### Printer not found in scan
+### A network's messages aren't printing
 
-- Make sure the PT-210 is **turned ON**
-- Move the printer closer to your Mac
-- Try turning the printer off and on again
+Check the name in `beeper_networks` matches what Beeper reports:
 
-### `--scan` exits immediately with no output (crash)
+```bash
+source .env
+curl -s -H "Authorization: Bearer $BEEPER_ACCESS_TOKEN" \
+  "http://127.0.0.1:23373/v1/chats" | python3 -m json.tool | grep '"network"' | sort -u
+```
 
-macOS requires the running binary to declare `NSBluetoothAlwaysUsageDescription`
-in its `Info.plist` before it may scan for Bluetooth devices. Homebrew's `python3`
-doesn't, so the OS kills the process the moment a scan starts (SIGABRT, no error
-message). Confirm it with:
+### `--scan` exits immediately with no output
+
+macOS requires the running binary to declare `NSBluetoothAlwaysUsageDescription` in its
+`Info.plist` before it may scan for Bluetooth devices. Homebrew's `python3` doesn't, so
+the OS kills the process the moment a scan starts (SIGABRT, no error message). Confirm:
 
 ```bash
 ls -t ~/Library/Logs/DiagnosticReports/Python-*.ips | head -1
@@ -225,29 +216,40 @@ ls -t ~/Library/Logs/DiagnosticReports/Python-*.ips | head -1
 
 The crash report names TCC and `NSBluetoothAlwaysUsageDescription`.
 
-Connecting to an already-known address does **not** hit this, so the workaround is
-to pin the address instead of scanning: set `PRINTER_ADDRESS` in `.env` (see
-`.env.example`). To find the address, run `--scan` from a Python that does declare
-the key — python.org's framework build, or any terminal already granted Bluetooth
-access — or reuse the address from a machine where scanning works.
+Connecting to an already-known address does **not** hit this, so the workaround is to
+pin the address instead of scanning: set `PRINTER_ADDRESS` in `.env`. To find it, run
+`--scan` from a Python that declares the key (python.org's framework build), or reuse
+the address from a machine where scanning works.
 
-### Messages not appearing
+### Printer not found
 
-Make sure iCloud Messages sync is enabled:
-- **Messages app → Settings → iMessage → "Enable Messages in iCloud"**
+- Make sure the printer is **turned ON** and nearby
+- Try turning it off and on again
+- `PRINTER_ADDRESS` from another Mac won't work — the address is per-machine
 
 ### Print quality issues
 
 - Check paper is loaded correctly
-- Try adjusting `paper_width_chars` in config.json
+- Try adjusting `paper_width_chars`
 
 ## Technical Details
 
-This project uses:
+- **Bluetooth Low Energy** via [`bleak`](https://github.com/hbldh/bleak)
+- **ESC/POS** commands for printer control
+- PT-210 GATT service: `e7810a71-73ae-499d-8c15-faa9aef0c3f2`
+- [Beeper Desktop API](https://developers.beeper.com/desktop-api) for messages
 
-- **Bluetooth Low Energy (BLE)** via the `bleak` library
-- **ESC/POS commands** for printer control
-- PT-210 custom GATT service: `e7810a71-73ae-499d-8c15-faa9aef0c3f2`
+### Why the chat/message list endpoints, not search?
+
+Beeper's macOS iMessage support is a built-in automation library rather than a Matrix
+bridge, so it has no entry in `/v1/accounts` or `/v1/bridges` and is missing from the
+`/v1/messages/search` index entirely. Reading from `/v1/chats` and
+`/v1/chats/{chatID}/messages` covers every network uniformly.
+
+New messages are tracked with a cursor **per chat** rather than one global timestamp.
+iMessage is local and instant while bridged networks sync with a delay, so a single
+shared watermark would let fast iMessages bury slower messages that arrived later
+carrying earlier timestamps.
 
 ## License
 

@@ -2,22 +2,25 @@
 """
 📱➡️🖨️ Text-to-Print (Mac Only Edition)
 
-Automatically prints incoming text messages to a Bluetooth thermal printer.
-Uses Bluetooth Low Energy (BLE) for reliable communication.
-Supports various thermal printers including GOOJPRT PT-210 and generic BLE printers.
+Automatically prints incoming messages to a Bluetooth thermal printer.
+
+Messages come from the local Beeper Desktop API, so any network Beeper
+connects -- iMessage, WhatsApp, Instagram and the rest -- can print.
+Printing uses Bluetooth Low Energy, and works with GOOJPRT PT-210 and
+other generic BLE thermal printers.
+
+Requires Beeper Desktop to be running, with BEEPER_ACCESS_TOKEN set in a
+local .env file (see .env.example).
 
 Usage:
     python3 text_printer.py              Run the message monitor
     python3 text_printer.py --scan       Scan for BLE printers
     python3 text_printer.py --test       Test print via BLE
     python3 text_printer.py --explore    Explore printer's BLE services
-
-Configure your printer address in config.json using the address from --scan.
 """
 
 import asyncio
 import sys
-import sqlite3
 import os
 import json
 import re
@@ -749,277 +752,7 @@ class BLEPrinter:
 
 
 # =============================================================================
-# CONTACT NAME LOOKUP
-# =============================================================================
-
-class ContactLookup:
-    """Look up contact names from the macOS AddressBook database."""
-    
-    def __init__(self):
-        self._cache = {}  # Cache lookups to avoid repeated DB queries
-        self._db_path = self._find_addressbook_db()
-    
-    def _find_addressbook_db(self) -> Optional[str]:
-        """Find the AddressBook database path."""
-        base_path = os.path.expanduser("~/Library/Application Support/AddressBook/Sources")
-        
-        if not os.path.exists(base_path):
-            return None
-        
-        # Look for the database in source folders
-        for source_dir in os.listdir(base_path):
-            db_path = os.path.join(base_path, source_dir, "AddressBook-v22.abcddb")
-            if os.path.exists(db_path):
-                return db_path
-        
-        return None
-    
-    def get_name(self, identifier: str) -> Optional[str]:
-        """
-        Look up a contact name by phone number or email.
-        Returns the contact name if found, None otherwise.
-        """
-        if not identifier:
-            return None
-        
-        # Check cache first
-        if identifier in self._cache:
-            return self._cache[identifier]
-        
-        name = None
-        
-        # Try AddressBook database
-        if self._db_path:
-            name = self._lookup_in_addressbook(identifier)
-        
-        # Cache the result (even if None, to avoid repeated lookups)
-        self._cache[identifier] = name
-        return name
-    
-    def _lookup_in_addressbook(self, identifier: str) -> Optional[str]:
-        """Query the AddressBook database for a contact name."""
-        try:
-            conn = sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True)
-            cursor = conn.cursor()
-            
-            # Normalize phone number (remove non-digits for comparison)
-            normalized_phone = ''.join(c for c in identifier if c.isdigit())
-            
-            # Query for phone number match
-            if normalized_phone:
-                cursor.execute("""
-                    SELECT ZABCDRECORD.ZFIRSTNAME, ZABCDRECORD.ZLASTNAME
-                    FROM ZABCDRECORD
-                    JOIN ZABCDPHONENUMBER ON ZABCDRECORD.Z_PK = ZABCDPHONENUMBER.ZOWNER
-                    WHERE REPLACE(REPLACE(REPLACE(REPLACE(ZABCDPHONENUMBER.ZFULLNUMBER, ' ', ''), '-', ''), '(', ''), ')', '')
-                    LIKE ?
-                """, (f"%{normalized_phone[-10:]}",))  # Match last 10 digits
-                
-                row = cursor.fetchone()
-                if row:
-                    first, last = row[0] or '', row[1] or ''
-                    name = f"{first} {last}".strip()
-                    if name:
-                        conn.close()
-                        return name
-            
-            # Query for email match
-            if '@' in identifier:
-                cursor.execute("""
-                    SELECT ZABCDRECORD.ZFIRSTNAME, ZABCDRECORD.ZLASTNAME
-                    FROM ZABCDRECORD
-                    JOIN ZABCDEMAILADDRESS ON ZABCDRECORD.Z_PK = ZABCDEMAILADDRESS.ZOWNER
-                    WHERE LOWER(ZABCDEMAILADDRESS.ZADDRESS) = LOWER(?)
-                """, (identifier,))
-                
-                row = cursor.fetchone()
-                if row:
-                    first, last = row[0] or '', row[1] or ''
-                    name = f"{first} {last}".strip()
-                    if name:
-                        conn.close()
-                        return name
-            
-            conn.close()
-            
-        except Exception as e:
-            logger.debug(f"AddressBook lookup failed: {e}")
-        
-        return None
-
-
-# =============================================================================
-# MESSAGE MONITOR
-# =============================================================================
-
-class MessageMonitor:
-    """Monitors the macOS Messages database for new messages."""
-    
-    APPLE_EPOCH_OFFSET = 978307200
-    
-    def __init__(self, config: dict):
-        self.config = config
-        self.db_path = os.path.expanduser("~/Library/Messages/chat.db")
-        self.state_file = Path(__file__).parent / ".last_message_id"
-        self.last_message_id = self._load_last_id()
-        self.contacts = ContactLookup()  # For looking up contact names
-    
-    def _load_last_id(self) -> int:
-        """
-        Get the current max message ID from database.
-        Always starts fresh on boot - only prints messages that arrive AFTER the script starts.
-        """
-        try:
-            conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-            cursor = conn.cursor()
-            cursor.execute("SELECT MAX(ROWID) FROM message")
-            result = cursor.fetchone()[0]
-            conn.close()
-            max_id = result or 0
-            logger.info(f"Starting from message ID {max_id} - only new messages will print")
-            return max_id
-        except Exception as e:
-            logger.error(f"Could not get max message ID: {e}")
-            return 0
-    
-    def _save_state(self):
-        """Save current position."""
-        self.state_file.write_text(str(self.last_message_id))
-    
-    def _convert_timestamp(self, timestamp: int) -> datetime:
-        """Convert Apple timestamp to Python datetime."""
-        if timestamp is None:
-            return datetime.now()
-        if timestamp > 1e12:
-            timestamp = timestamp / 1e9
-        return datetime.fromtimestamp(timestamp + self.APPLE_EPOCH_OFFSET)
-    
-    def _get_attachments(self, message_id: int, cursor) -> list:
-        """Get attachment information for a message."""
-        attachments = []
-        
-        try:
-            cursor.execute("""
-                SELECT 
-                    a.filename,
-                    a.mime_type,
-                    a.transfer_name
-                FROM attachment a
-                JOIN message_attachment_join maj ON a.ROWID = maj.attachment_id
-                WHERE maj.message_id = ?
-            """, (message_id,))
-            
-            for row in cursor.fetchall():
-                filename = row[0] or row[2] or 'attachment'
-                mime_type = row[1] or ''
-                
-                # Determine attachment type
-                if mime_type.startswith('image/'):
-                    att_type = 'image'
-                elif mime_type.startswith('video/'):
-                    att_type = 'video'
-                elif mime_type.startswith('audio/'):
-                    att_type = 'audio'
-                else:
-                    att_type = 'file'
-                
-                # Get the full path (attachments are stored in ~/Library/Messages/Attachments)
-                if filename and filename.startswith('~'):
-                    filepath = os.path.expanduser(filename)
-                else:
-                    filepath = filename
-                
-                attachments.append({
-                    'type': att_type,
-                    'mime_type': mime_type,
-                    'filename': os.path.basename(filename) if filename else 'attachment',
-                    'filepath': filepath,
-                })
-        
-        except Exception as e:
-            logger.debug(f"Error getting attachments: {e}")
-        
-        return attachments
-    
-    def fetch_new_messages(self) -> list:
-        """Fetch messages newer than last processed ID."""
-        messages = []
-        today = datetime.now().date()
-        
-        try:
-            conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            query = """
-                SELECT 
-                    m.ROWID, m.text, m.date, m.is_from_me, m.service,
-                    m.cache_has_attachments,
-                    h.id as handle_id
-                FROM message m
-                LEFT JOIN handle h ON m.handle_id = h.ROWID
-                WHERE m.ROWID > ?
-                ORDER BY m.ROWID ASC
-            """
-            cursor.execute(query, (self.last_message_id,))
-            
-            for row in cursor.fetchall():
-                # Always update the last_message_id to avoid reprocessing
-                self.last_message_id = row['ROWID']
-                
-                # Skip messages not from today
-                msg_timestamp = self._convert_timestamp(row['date'])
-                if msg_timestamp.date() != today:
-                    continue
-                
-                # Skip sent messages unless configured to include them
-                if row['is_from_me'] and not self.config.get('include_sent_messages', False):
-                    continue
-                
-                # Check for attachments (images, etc.)
-                has_attachment = bool(row['cache_has_attachments'])
-                attachments = []
-
-                if has_attachment:
-                    attachments = self._get_attachments(row['ROWID'], cursor)
-
-                # Skip messages with neither text nor media. Photos and videos
-                # usually arrive with no caption, so an empty body alone is not
-                # a reason to drop the message.
-                if not row['text'] and not attachments:
-                    continue
-
-                # Apply contact filter if specified
-                filter_contacts = self.config.get('filter_contacts', [])
-                if filter_contacts and row['handle_id'] not in filter_contacts:
-                    continue
-
-                # Get contact name if available, otherwise use phone/email
-                handle_id = row['handle_id'] or 'Unknown'
-                contact_name = self.contacts.get_name(handle_id)
-
-                messages.append({
-                    'id': row['ROWID'],
-                    'text': row['text'] or '',
-                    'timestamp': msg_timestamp,
-                    'sender': contact_name or handle_id,  # Use name if found
-                    'sender_id': handle_id,  # Keep the raw phone/email too
-                    'is_from_me': bool(row['is_from_me']),
-                    'has_attachment': has_attachment,
-                    'attachments': attachments,
-                    'source': 'iMessage',
-                })
-            
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Database error: {e}")
-        
-        return messages
-
-
-# =============================================================================
-# BEEPER MONITOR (WhatsApp, Instagram, etc. via the Beeper Desktop API)
+# BEEPER MONITOR (iMessage, WhatsApp, Instagram, ... via the Beeper Desktop API)
 # =============================================================================
 
 class BeeperMonitor:
@@ -1037,14 +770,16 @@ class BeeperMonitor:
         self.config = config
         self.base_url = config.get('beeper_base_url', 'http://127.0.0.1:23373').rstrip('/')
         self.token = os.environ.get('BEEPER_ACCESS_TOKEN', '')
-        self.networks = {n.lower() for n in config.get('beeper_networks', ['whatsapp', 'instagram'])}
+        self.networks = {n.lower() for n in config.get('beeper_networks', ['imessage', 'whatsapp', 'instagram'])}
         self.state_file = Path(__file__).parent / ".last_beeper_timestamp"
 
-        self.enabled = bool(config.get('beeper_enabled', False) and self.token)
-        if self.enabled:
+        if not self.token:
+            logger.error("BEEPER_ACCESS_TOKEN is not set. Copy .env.example to .env and add your token.")
+            self.enabled = False
+        else:
             self.enabled = self._check_connection()
 
-        # Only print messages that arrive after startup (mirrors the iMessage monitor).
+        # Only print messages that arrive after startup.
         self.floor = self._load_last_seen()
 
         # Newest timestamp already printed, tracked per chat rather than globally.
@@ -1270,7 +1005,7 @@ class BeeperMonitor:
                         continue
 
                     ts = msg.get('timestamp')
-                    # Naive local datetime, to stay comparable with MessageMonitor's timestamps
+                    # Naive local datetime, so receipts show local wall-clock time
                     timestamp = datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone().replace(tzinfo=None)
 
                     attachments = []
@@ -1408,35 +1143,11 @@ def load_config() -> dict:
         "show_timestamp": True,
         "show_sender": True,
         "decorative_border": True,
-        "beeper_enabled": False,
-        "beeper_networks": ["whatsapp", "instagram"],
+        "print_images": True,
+        "print_video_frames": True,
+        "beeper_networks": ["imessage", "whatsapp", "instagram"],
         "beeper_base_url": "http://127.0.0.1:23373",
     }
-
-
-def check_database_access() -> bool:
-    """Verify we can access the Messages database."""
-    db_path = os.path.expanduser("~/Library/Messages/chat.db")
-    
-    if not os.path.exists(db_path):
-        print("❌ Messages database not found")
-        return False
-    
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM message")
-        count = cursor.fetchone()[0]
-        conn.close()
-        print(f"✓ Messages database accessible ({count:,} messages)")
-        return True
-    except sqlite3.OperationalError:
-        print("❌ Permission denied!")
-        print("\n  To fix this:")
-        print("  1. Open System Settings → Privacy & Security → Full Disk Access")
-        print("  2. Add Terminal (or your IDE) to the list")
-        print("  3. Restart Terminal and try again")
-        return False
 
 
 # =============================================================================
@@ -1592,17 +1303,12 @@ async def cmd_monitor():
 
     config = load_config()
 
-    # If "imessage" is listed in beeper_networks and Beeper is reachable, iMessage
-    # comes through Beeper -- which needs no Full Disk Access, handy when it's
-    # blocked by an MDM policy. Otherwise fall back to reading chat.db directly.
     beeper = BeeperMonitor(config)
-    imessage_via_beeper = beeper.enabled and 'imessage' in beeper.networks
-
-    monitor = None
-    if not imessage_via_beeper:
-        if not check_database_access():
-            return
-        monitor = MessageMonitor(config)
+    if not beeper.enabled:
+        print("❌ Could not reach Beeper Desktop -- nothing to monitor.")
+        print("   Make sure Beeper Desktop is running and BEEPER_ACCESS_TOKEN in")
+        print("   .env is current (see .env.example).")
+        return
 
     printer = BLEPrinter(config)
 
@@ -1616,12 +1322,9 @@ async def cmd_monitor():
     print()
     print("Configuration:")
     print(f"  Poll interval: {config.get('poll_interval_seconds', 2)}s")
+    print(f"  Networks: {', '.join(sorted(beeper.networks))}")
     print(f"  Filter contacts: {config.get('filter_contacts') or 'All'}")
     print(f"  Include sent: {config.get('include_sent_messages', False)}")
-    if config.get('beeper_enabled', False):
-        status = f"watching {', '.join(sorted(beeper.networks))}" if beeper.enabled else "unavailable"
-        print(f"  Beeper: {status}")
-    print(f"  iMessage source: {'Beeper' if imessage_via_beeper else 'chat.db'}")
     print()
     print("-" * 50)
     logger.info("Monitoring for new messages... (Ctrl+C to stop)")
@@ -1629,9 +1332,6 @@ async def cmd_monitor():
     try:
         while True:
             messages = beeper.fetch_new_messages()
-            if monitor:
-                messages = monitor.fetch_new_messages() + messages
-            messages.sort(key=lambda m: m['timestamp'])
 
             for msg in messages:
                 # Log the message
@@ -1660,16 +1360,12 @@ async def cmd_monitor():
                         await print_attachment(printer, att, config)
             
             if messages:
-                if monitor:
-                    monitor._save_state()
                 beeper._save_state()
 
             await asyncio.sleep(config.get('poll_interval_seconds', 2))
 
     except KeyboardInterrupt:
         print("\n\nStopping...")
-        if monitor:
-            monitor._save_state()
         beeper._save_state()
         await printer.disconnect()
         print("Goodbye! 👋")
